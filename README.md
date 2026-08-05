@@ -20,9 +20,8 @@ This is a fork of Opencut Classic that adds a bunch of missing features that are
 ### Prerequisites
 
 - [Bun](https://bun.sh/docs/installation)
-- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
 
-> **Note:** Docker is optional but recommended for running the local database and Redis. If you only want to work on frontend features, you can skip it.
+> **Note:** [Docker](https://docs.docker.com/get-docker/) is only needed for self-hosting a production build. Local development doesn't require it.
 
 ### Setup
 
@@ -38,13 +37,7 @@ This is a fork of Opencut Classic that adds a bunch of missing features that are
    Copy-Item apps/web/.env.example apps/web/.env.local
    ```
 
-3. Start the database and Redis:
-
-   ```bash
-   docker compose up -d db redis serverless-redis-http
-   ```
-
-4. Install dependencies and start the dev server:
+3. Install dependencies and start the dev server:
 
    ```bash
    bun install
@@ -53,7 +46,7 @@ This is a fork of Opencut Classic that adds a bunch of missing features that are
 
 The application will be available at [http://localhost:3000](http://localhost:3000).
 
-The `.env.example` has sensible defaults that match the Docker Compose config — it should work out of the box.
+The `.env.example` has sensible defaults — it should work out of the box.
 
 ### Desktop setup
 
