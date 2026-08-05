@@ -1,15 +1,18 @@
 import type { EditorCore } from "@/core";
 import type { ElementBounds } from "@/preview/element-bounds";
 import type { ParamValues } from "@/params";
+import { bakeTransitionStill } from "@/freeze/bake";
 import type {
 	SceneTracks,
 	TrackType,
 	TimelineTrack,
 	TimelineElement,
 	RetimeConfig,
+	TScene,
 } from "@/timeline";
 import { calculateTotalDuration } from "@/timeline";
 import { TimelineDragSource } from "@/timeline/drag-source";
+import { hasPreviewOverlayChange } from "@/timeline/preview-overlay";
 import { findTrackInSceneTracks } from "@/timeline/track-element-update";
 import { lastFrameMediaTime, type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import {
@@ -57,6 +60,14 @@ import {
 	UpsertEffectParamKeyframeCommand,
 	RemoveEffectParamKeyframeCommand,
 	ToggleSourceAudioSeparationCommand,
+	SetElementTransitionCommand,
+	UpdateElementTransitionCommand,
+	RemoveElementTransitionCommand,
+	AddAdjustmentCommand,
+	RemoveAdjustmentCommand,
+	ToggleAdjustmentCommand,
+	UpdateAdjustmentParamsCommand,
+	FreezeFrameCommand,
 } from "@/commands/timeline";
 import type { InsertElementParams } from "@/commands/timeline/element/insert-element";
 import type {
@@ -68,6 +79,10 @@ export class TimelineManager {
 	private listeners = new Set<() => void>();
 	private previewOverlay = new Map<string, Partial<TimelineElement>>();
 	private previewTracks: SceneTracks | null = null;
+	private totalDurationCache: {
+		scene: TScene;
+		duration: MediaTime;
+	} | null = null;
 	public readonly dragSource = new TimelineDragSource();
 
 	constructor(private editor: EditorCore) {}
@@ -202,13 +217,29 @@ export class TimelineManager {
 		return command.getRightSideElements();
 	}
 
+	/**
+	 * Memoized on active-scene identity. `calculateTotalDuration` walks every
+	 * element on every track, and this is called several times per seek — plus
+	 * from `useEditor` selectors that re-run on every store notification, so
+	 * scrubbing used to re-walk the whole scene many times per mousemove.
+	 *
+	 * Safe because scene edits are immutable: `updateSceneTracks` always builds
+	 * a fresh scene object, so a changed timeline can never reuse this key.
+	 */
 	getTotalDuration(): MediaTime {
 		const activeScene = this.editor.scenes.getActiveSceneOrNull();
 		if (!activeScene) {
 			return ZERO_MEDIA_TIME;
 		}
 
-		return calculateTotalDuration({ tracks: activeScene.tracks });
+		const cached = this.totalDurationCache;
+		if (cached && cached.scene === activeScene) {
+			return cached.duration;
+		}
+
+		const duration = calculateTotalDuration({ tracks: activeScene.tracks });
+		this.totalDurationCache = { scene: activeScene, duration };
+		return duration;
 	}
 
 	getLastFrameTime(): MediaTime {
@@ -478,6 +509,180 @@ export class TimelineManager {
 		this.editor.command.execute({ command });
 	}
 
+	setElementTransition({
+		trackId,
+		elementId,
+		transitionType,
+		duration,
+	}: {
+		trackId: string;
+		elementId: string;
+		transitionType: string;
+		duration?: MediaTime;
+	}): void {
+		const command = new SetElementTransitionCommand({
+			trackId,
+			elementId,
+			transitionType,
+			duration,
+		});
+		this.editor.command.execute({ command });
+	}
+
+	updateElementTransition({
+		trackId,
+		elementId,
+		duration,
+		params,
+		pushHistory = true,
+	}: {
+		trackId: string;
+		elementId: string;
+		duration?: MediaTime;
+		params?: Partial<ParamValues>;
+		pushHistory?: boolean;
+	}): void {
+		const command = new UpdateElementTransitionCommand({
+			trackId,
+			elementId,
+			duration,
+			params,
+		});
+		if (pushHistory) {
+			this.editor.command.execute({ command });
+		} else {
+			command.execute();
+		}
+	}
+
+	removeElementTransition({
+		trackId,
+		elementId,
+	}: {
+		trackId: string;
+		elementId: string;
+	}): void {
+		const command = new RemoveElementTransitionCommand({
+			trackId,
+			elementId,
+		});
+		this.editor.command.execute({ command });
+	}
+
+	addAdjustment({
+		trackId,
+		elementId,
+		adjustmentType,
+	}: {
+		trackId: string;
+		elementId: string;
+		adjustmentType: string;
+	}): string {
+		const command = new AddAdjustmentCommand({
+			trackId,
+			elementId,
+			adjustmentType,
+		});
+		this.editor.command.execute({ command });
+		return command.getAdjustmentId() ?? "";
+	}
+
+	removeAdjustment({
+		trackId,
+		elementId,
+		adjustmentId,
+	}: {
+		trackId: string;
+		elementId: string;
+		adjustmentId: string;
+	}): void {
+		const command = new RemoveAdjustmentCommand({
+			trackId,
+			elementId,
+			adjustmentId,
+		});
+		this.editor.command.execute({ command });
+	}
+
+	toggleAdjustment({
+		trackId,
+		elementId,
+		adjustmentId,
+	}: {
+		trackId: string;
+		elementId: string;
+		adjustmentId: string;
+	}): void {
+		const command = new ToggleAdjustmentCommand({
+			trackId,
+			elementId,
+			adjustmentId,
+		});
+		this.editor.command.execute({ command });
+	}
+
+	updateAdjustmentParams({
+		trackId,
+		elementId,
+		adjustmentId,
+		params,
+		pushHistory = true,
+	}: {
+		trackId: string;
+		elementId: string;
+		adjustmentId: string;
+		params: Partial<ParamValues>;
+		pushHistory?: boolean;
+	}): void {
+		const command = new UpdateAdjustmentParamsCommand({
+			trackId,
+			elementId,
+			adjustmentId,
+			params,
+		});
+		if (pushHistory) {
+			this.editor.command.execute({ command });
+		} else {
+			command.execute();
+		}
+	}
+
+	/**
+	 * Inserts a held still of the frame at `freezeTime`, rippling the rest of the
+	 * track to make room. Returns the id of the frozen segment.
+	 */
+	async freezeFrame({
+		trackId,
+		elementId,
+		freezeTime,
+		freezeDuration,
+	}: {
+		trackId: string;
+		elementId: string;
+		freezeTime: MediaTime;
+		freezeDuration?: MediaTime;
+	}): Promise<string | null> {
+		// A still normally re-samples one source frame, which cannot reproduce a
+		// moment where the picture is two clips mid-transition. There, the blended
+		// frame is rendered once up front and the still holds that image instead.
+		const bakedMediaId = await bakeTransitionStill({
+			editor: this.editor,
+			trackId,
+			elementId,
+			freezeTime,
+		});
+
+		const command = new FreezeFrameCommand({
+			trackId,
+			elementId,
+			freezeTime,
+			freezeDuration,
+			bakedMediaId: bakedMediaId ?? undefined,
+		});
+		this.editor.command.execute({ command });
+		return command.getFrozenElementId();
+	}
+
 	upsertKeyframes({
 		keyframes,
 	}: {
@@ -715,11 +920,9 @@ export class TimelineManager {
 		let changedOverlayCount = 0;
 		for (const { elementId, updates: elementUpdates } of updates) {
 			const existingOverlay = this.previewOverlay.get(elementId);
-			const changed = Object.entries(elementUpdates).some(([key, value]) => {
-				return !Object.is(
-					existingOverlay?.[key as keyof TimelineElement],
-					value,
-				);
+			const changed = hasPreviewOverlayChange({
+				existingOverlay,
+				updates: elementUpdates,
 			});
 			if (changed) {
 				changedOverlayCount += 1;
@@ -841,7 +1044,9 @@ export class TimelineManager {
 	}): void {
 		const shouldMute = elements.some(({ trackId, elementId }) => {
 			const element = this.getElementByRef({ trackId, elementId });
-			return element && canElementHaveAudio(element) && !isElementMuted({ element });
+			return (
+				element && canElementHaveAudio(element) && !isElementMuted({ element })
+			);
 		});
 
 		const nextUpdates = elements.flatMap(({ trackId, elementId }) => {

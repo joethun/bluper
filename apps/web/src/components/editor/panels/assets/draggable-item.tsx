@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
@@ -101,14 +101,14 @@ export function DraggableItem({
 				>
 					<div
 						className={cn(
-							"relative flex h-auto w-full cursor-default flex-col gap-1 p-",
+							"relative flex h-auto w-full cursor-default flex-col gap-1.5",
 							className,
 						)}
 					>
 						<AspectRatio
 							ratio={aspectRatio}
 							className={cn(
-								"bg-accent relative overflow-hidden",
+								"bg-accent relative overflow-hidden ring-1 ring-transparent transition-shadow group-hover:ring-border",
 								isRounded && "rounded-sm",
 								isDraggable && "[&::-webkit-drag-ghost]:opacity-0",
 							)}
@@ -125,16 +125,13 @@ export function DraggableItem({
 							)}
 						</AspectRatio>
 						{shouldShowLabel && (
+							// Overflow is handled by `truncate` (CSS ellipsis) so the full
+							// name stays in the DOM for screen readers and the tooltip.
 							<span
-								className="text-muted-foreground w-full truncate text-left text-[0.7rem]"
+								className="text-muted-foreground w-full truncate text-left text-xs"
 								title={name}
 							>
-								<span className="sr-only">{name}</span>
-								<span aria-hidden="true">
-									{name.length > 8
-										? `${name.slice(0, 16)}...${name.slice(-3)}`
-										: name}
-								</span>
+								{name}
 							</span>
 						)}
 					</div>
@@ -222,7 +219,7 @@ function PlusButton({
 			}}
 			title={tooltipText}
 		>
-			<Plus />
+			<PlusIcon />
 		</Button>
 	);
 

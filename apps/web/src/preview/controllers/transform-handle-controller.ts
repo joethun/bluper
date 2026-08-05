@@ -17,6 +17,7 @@ import {
 	type SnapLine,
 } from "@/preview/preview-snap";
 import { isVisualElement } from "@/timeline/element-utils";
+import type { Point } from "@/utils/geometry";
 import {
 	getElementLocalTime,
 	hasKeyframesForPath,
@@ -33,7 +34,6 @@ import type {
 	VisualElement,
 } from "@/timeline";
 
-type Point = { readonly x: number; readonly y: number };
 type CanvasSize = { readonly width: number; readonly height: number };
 type HandleType = Corner | Edge | "rotation";
 
@@ -101,7 +101,7 @@ interface VisualSelectionContext {
 	readonly resolvedTransform: Transform;
 }
 
-export interface PreviewViewportAdapter {
+interface PreviewViewportAdapter {
 	screenToCanvas: ({
 		clientX,
 		clientY,
@@ -116,11 +116,11 @@ export interface PreviewViewportAdapter {
 	}) => Point;
 }
 
-export interface InputAdapter {
+interface InputAdapter {
 	isShiftHeld: () => boolean;
 }
 
-export interface SceneReader {
+interface SceneReader {
 	getSelectedElements: () => readonly ElementRef[];
 	getTracks: () => SceneTracks;
 	getCurrentTime: () => number;
@@ -128,19 +128,19 @@ export interface SceneReader {
 	getCanvasSize: () => CanvasSize;
 }
 
-export interface TimelinePreviewUpdate {
+interface TimelinePreviewUpdate {
 	readonly trackId: string;
 	readonly elementId: string;
 	readonly updates: Partial<TimelineElement>;
 }
 
-export interface TimelineOps {
+interface TimelineOps {
 	previewElements: (updates: readonly TimelinePreviewUpdate[]) => void;
 	commitPreview: () => void;
 	discardPreview: () => void;
 }
 
-export interface PreviewOptions {
+interface PreviewOptions {
 	onSnapLinesChange?: (lines: SnapLine[]) => void;
 }
 

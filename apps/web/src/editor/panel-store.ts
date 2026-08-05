@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { PANEL_CONFIG } from "@/panels/layout";
 
-export interface PanelSizes {
+interface PanelSizes {
 	tools: number;
 	preview: number;
 	properties: number;
@@ -10,7 +10,7 @@ export interface PanelSizes {
 	timeline: number;
 }
 
-export type PanelId = keyof PanelSizes;
+type PanelId = keyof PanelSizes;
 
 interface PanelState {
 	panels: PanelSizes;

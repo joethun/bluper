@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Dialog as SheetPrimitive } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
-import { X } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { cn } from "@/utils/ui";
 import { useOverlayOpenChange } from "./use-overlay-open-change";
 
@@ -26,8 +26,6 @@ function Sheet({
 }
 
 const SheetTrigger = SheetPrimitive.Trigger;
-
-const SheetClose = SheetPrimitive.Close;
 
 const SheetPortal = SheetPrimitive.Portal;
 
@@ -85,7 +83,7 @@ const SheetContent = React.forwardRef<
 			{...props}
 		>
 			<SheetPrimitive.Close className="ring-offset-background focus:ring-ring data-[state=open]:bg-secondary absolute top-4 right-4 cursor-pointer rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
-				<X className="size-5" />
+				<XIcon className="size-4" />
 				<span className="sr-only">Close</span>
 			</SheetPrimitive.Close>
 			{children}
@@ -148,13 +146,9 @@ SheetDescription.displayName = SheetPrimitive.Description.displayName;
 
 export {
 	Sheet,
-	SheetPortal,
-	SheetOverlay,
 	SheetTrigger,
-	SheetClose,
 	SheetContent,
 	SheetHeader,
-	SheetFooter,
 	SheetTitle,
 	SheetDescription,
 };

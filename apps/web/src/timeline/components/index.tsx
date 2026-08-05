@@ -2,18 +2,20 @@
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-	Delete02Icon,
-	MagicWand05Icon,
-	MusicNote03Icon,
-	TaskAdd02Icon,
-	TextIcon,
-	ViewIcon,
-	ViewOffSlashIcon,
-	VolumeHighIcon,
+	EyeIcon,
+	EyeOffIcon,
+	ListPlusIcon,
+	type LucideIcon,
+	MusicIcon,
+	ShapesIcon,
+	SlidersHorizontalIcon,
+	Trash2Icon,
+	TypeIcon,
+	VideoIcon,
+	Volume2Icon,
 	VolumeOffIcon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
-import { OcShapesIcon, OcVideoIcon } from "@/components/icons";
+	WandSparklesIcon,
+} from "lucide-react";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -91,27 +93,14 @@ import { cn } from "@/utils/ui";
 const TRACKS_CONTAINER_MAX_HEIGHT = 800;
 const FALLBACK_CONTAINER_WIDTH = 1000;
 const TRACKS_CONTAINER_HEIGHT = { min: 0, max: TRACKS_CONTAINER_MAX_HEIGHT };
+const TRACK_ICON_CLASS = "text-muted-foreground size-4 shrink-0";
 const TRACK_ICONS: Record<TimelineTrack["type"], ReactNode> = {
-	video: <OcVideoIcon className="text-muted-foreground size-4 shrink-0" />,
-	text: (
-		<HugeiconsIcon
-			icon={TextIcon}
-			className="text-muted-foreground size-4 shrink-0"
-		/>
-	),
-	audio: (
-		<HugeiconsIcon
-			icon={MusicNote03Icon}
-			className="text-muted-foreground size-4 shrink-0"
-		/>
-	),
-	graphic: <OcShapesIcon className="text-muted-foreground size-4 shrink-0" />,
-	effect: (
-		<HugeiconsIcon
-			icon={MagicWand05Icon}
-			className="text-muted-foreground size-4 shrink-0"
-		/>
-	),
+	video: <VideoIcon className={TRACK_ICON_CLASS} />,
+	text: <TypeIcon className={TRACK_ICON_CLASS} />,
+	audio: <MusicIcon className={TRACK_ICON_CLASS} />,
+	graphic: <ShapesIcon className={TRACK_ICON_CLASS} />,
+	effect: <WandSparklesIcon className={TRACK_ICON_CLASS} />,
+	adjustment: <SlidersHorizontalIcon className={TRACK_ICON_CLASS} />,
 };
 
 export function Timeline() {
@@ -173,6 +162,23 @@ export function Timeline() {
 
 	const savedViewState = editor.project.getTimelineViewState();
 
+	// The rendered width of the timeline for a given zoom. Pure arithmetic, so
+	// the zoom controller can clamp scroll without reading scrollWidth off the
+	// DOM (which forces a full synchronous layout mid-zoom).
+	const computeTimelineWidth = useCallback(
+		({ zoom }: { zoom: number }) =>
+			Math.max(
+				timelineTimeToPixels({ time: timelineDuration, zoomLevel: zoom }) +
+					getTimelinePaddingPx({
+						containerWidth,
+						zoomLevel: zoom,
+						minZoom: minZoomLevel,
+					}),
+				containerWidth,
+			),
+		[timelineDuration, containerWidth, minZoomLevel],
+	);
+
 	const { zoomLevel, setZoomLevel, handleWheel, saveScrollPosition } =
 		useTimelineZoom({
 			containerRef: timelineRef,
@@ -182,6 +188,12 @@ export function Timeline() {
 			initialPlayheadTime: savedViewState?.playheadTime,
 			tracksScrollRef,
 			rulerScrollRef,
+			getMaxScrollLeft: ({ zoomLevel: zoom }) =>
+				Math.max(
+					0,
+					computeTimelineWidth({ zoom }) -
+						(tracksViewportWidth || containerWidth),
+				),
 		});
 	const { isResizing, handleResizeStart } = useTimelineResize({
 		zoomLevel,
@@ -370,19 +382,7 @@ export function Timeline() {
 		},
 	});
 
-	const contentWidth = timelineTimeToPixels({
-		time: timelineDuration,
-		zoomLevel,
-	});
-	const paddingPx = getTimelinePaddingPx({
-		containerWidth,
-		zoomLevel,
-		minZoom: minZoomLevel,
-	});
-	const dynamicTimelineWidth = Math.max(
-		contentWidth + paddingPx,
-		containerWidth,
-	);
+	const dynamicTimelineWidth = computeTimelineWidth({ zoom: zoomLevel });
 	const hasHorizontalScrollbar =
 		dynamicTimelineWidth > (tracksViewportWidth || containerWidth);
 
@@ -674,7 +674,7 @@ function TrackLabelsPanel({
 												<TrackToggleIcon
 													isOff={track.muted}
 													icons={{
-														on: VolumeHighIcon,
+														on: Volume2Icon,
 														off: VolumeOffIcon,
 													}}
 													onClick={() =>
@@ -688,8 +688,8 @@ function TrackLabelsPanel({
 												<TrackToggleIcon
 													isOff={track.hidden}
 													icons={{
-														on: ViewIcon,
-														off: ViewOffSlashIcon,
+														on: EyeIcon,
+														off: EyeOffIcon,
 													}}
 													onClick={() =>
 														editor.timeline.toggleTrackVisibility({
@@ -832,12 +832,19 @@ function TimelineTrackRows({
 										? (dropTarget?.targetElement?.elementId ?? null)
 										: null
 								}
+								seamTime={
+									isDragOver &&
+									dropTarget?.seamTime !== undefined &&
+									dropTarget.targetElement?.trackId === track.id
+										? dropTarget.seamTime
+										: null
+								}
 							/>
 						</div>
 					</ContextMenuTrigger>
 					<ContextMenuContent className="w-40">
 						<ContextMenuItem
-							icon={<HugeiconsIcon icon={TaskAdd02Icon} />}
+							icon={<ListPlusIcon />}
 							onClick={(event: React.MouseEvent) => {
 								event.stopPropagation();
 								invokeAction("paste-copied");
@@ -846,7 +853,7 @@ function TimelineTrackRows({
 							Paste elements
 						</ContextMenuItem>
 						<ContextMenuItem
-							icon={<HugeiconsIcon icon={VolumeHighIcon} />}
+							icon={<Volume2Icon />}
 							onClick={(event: React.MouseEvent) => {
 								event.stopPropagation();
 								timeline.toggleTrackMute({ trackId: track.id });
@@ -857,7 +864,7 @@ function TimelineTrackRows({
 								: "Mute track"}
 						</ContextMenuItem>
 						<ContextMenuItem
-							icon={<HugeiconsIcon icon={ViewIcon} />}
+							icon={<EyeIcon />}
 							onClick={(event: React.MouseEvent) => {
 								event.stopPropagation();
 								timeline.toggleTrackVisibility({ trackId: track.id });
@@ -869,7 +876,7 @@ function TimelineTrackRows({
 						</ContextMenuItem>
 						{track.id !== mainTrackId && (
 							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Delete02Icon} />}
+								icon={<Trash2Icon />}
 								onClick={(event: React.MouseEvent) => {
 									event.stopPropagation();
 									timeline.removeTrack({ trackId: track.id });
@@ -910,22 +917,23 @@ function TrackToggleIcon({
 }: {
 	isOff: boolean;
 	icons: {
-		on: IconSvgElement;
-		off: IconSvgElement;
+		on: LucideIcon;
+		off: LucideIcon;
 	};
 	onClick: () => void;
 }) {
+	const OnIcon = icons.on;
+	const OffIcon = icons.off;
+
 	return (
 		<>
 			{isOff ? (
-				<HugeiconsIcon
-					icon={icons.off}
+				<OffIcon
 					className="text-destructive size-4 cursor-pointer"
 					onClick={onClick}
 				/>
 			) : (
-				<HugeiconsIcon
-					icon={icons.on}
+				<OnIcon
 					className="text-muted-foreground size-4 cursor-pointer"
 					onClick={onClick}
 				/>

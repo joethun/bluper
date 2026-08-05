@@ -1,5 +1,6 @@
 import { FEATHER_HANDLE_SCALE } from "@/masks/feather";
 import type { ElementBounds } from "@/preview/element-bounds";
+import { rotateOffset } from "@/utils/geometry";
 import type {
 	MaskFeatures,
 	MaskHandleId,
@@ -30,7 +31,7 @@ const CURSOR = {
  *
  * So rotation=0 → normal points right → line runs vertically.
  */
-export function getLineMaskLinePoints({
+function getLineMaskLinePoints({
 	centerX,
 	centerY,
 	rotation,
@@ -154,12 +155,12 @@ function rotatePoint({
 	cy: number;
 	angleRad: number;
 }): { x: number; y: number } {
-	const cos = Math.cos(angleRad);
-	const sin = Math.sin(angleRad);
-	return {
-		x: cx + localX * cos - localY * sin,
-		y: cy + localX * sin + localY * cos,
-	};
+	const rotated = rotateOffset({
+		dx: localX,
+		dy: localY,
+		rotationRad: angleRad,
+	});
+	return { x: cx + rotated.x, y: cy + rotated.y };
 }
 
 export function getBoxMaskHandlePositions({
@@ -434,7 +435,7 @@ export function getBoxMaskRectOverlay({
 	};
 }
 
-export function getBoxMaskShapeOverlay({
+function getBoxMaskShapeOverlay({
 	centerX,
 	centerY,
 	width,

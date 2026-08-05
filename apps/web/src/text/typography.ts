@@ -1,6 +1,5 @@
 export const MIN_FONT_SIZE = 5;
 export const MAX_FONT_SIZE = 300;
-export const DEFAULT_TEXT_COLOR = "#000000";
 
 /**
  * higher value: smaller font size

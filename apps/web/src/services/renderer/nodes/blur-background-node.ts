@@ -1,5 +1,5 @@
 import type { EffectPass } from "@/effects/types";
-import type { RetimeConfig } from "@/timeline";
+import type { FreezeConfig, RetimeConfig } from "@/timeline";
 import { BaseNode } from "./base-node";
 
 export type BlurBackgroundNodeParams = {
@@ -12,6 +12,8 @@ export type BlurBackgroundNodeParams = {
 	trimStart: number;
 	trimEnd: number;
 	retime?: RetimeConfig;
+	/** Mirrors the foreground clip's freeze so the backdrop holds the same frame. */
+	freeze?: FreezeConfig;
 	blurIntensity: number;
 };
 

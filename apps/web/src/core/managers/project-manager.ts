@@ -53,6 +53,7 @@ export class ProjectManager {
 	};
 	private exportState: ExportState = {
 		isExporting: false,
+		phase: "idle",
 		progress: 0,
 		result: null,
 	};
@@ -211,7 +212,12 @@ export class ProjectManager {
 
 	async export({ options }: { options: ExportOptions }): Promise<ExportResult> {
 		this.exportCancelRequested = false;
-		this.exportState = { isExporting: true, progress: 0, result: null };
+		this.exportState = {
+			isExporting: true,
+			phase: "preparing",
+			progress: 0,
+			result: null,
+		};
 		this.notify();
 
 		const result = await this.editor.renderer.exportProject({
@@ -220,11 +226,16 @@ export class ProjectManager {
 				this.exportState = { ...this.exportState, progress };
 				this.notify();
 			},
+			onPhase: ({ phase }) => {
+				this.exportState = { ...this.exportState, phase };
+				this.notify();
+			},
 			onCancel: () => this.exportCancelRequested,
 		});
 
 		this.exportState = {
 			isExporting: false,
+			phase: "idle",
 			progress: this.exportState.progress,
 			result,
 		};
@@ -238,7 +249,12 @@ export class ProjectManager {
 	}
 
 	clearExportState(): void {
-		this.exportState = { isExporting: false, progress: 0, result: null };
+		this.exportState = {
+			isExporting: false,
+			phase: "idle",
+			progress: 0,
+			result: null,
+		};
 		this.notify();
 	}
 

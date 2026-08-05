@@ -1,20 +1,10 @@
-import type {
-	ParamDefinition,
-	ParamValue,
-	ParamValues,
-} from "@/params";
+import type { ParamDefinition, ParamValue, ParamValues } from "@/params";
 import { MIN_TRANSFORM_SCALE } from "@/animation/transform";
 import type { BlendMode } from "@/rendering";
-import type {
-	ElementType,
-	TimelineElement,
-} from "@/timeline";
+import type { ElementType, TimelineElement } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
 import { VOLUME_DB_MAX, VOLUME_DB_MIN } from "@/timeline/audio-constants";
-import {
-	CORNER_RADIUS_MAX,
-	CORNER_RADIUS_MIN,
-} from "@/text/background";
+import { CORNER_RADIUS_MAX, CORNER_RADIUS_MIN } from "@/text/background";
 
 export type ElementParamDefinition<TKey extends string = string> =
 	ParamDefinition<TKey> & {
@@ -46,13 +36,7 @@ export class DefinitionRegistry<TKey extends string, TDefinition> {
 		this.entityName = entityName;
 	}
 
-	register({
-		key,
-		definition,
-	}: {
-		key: TKey;
-		definition: TDefinition;
-	}): void {
+	register({ key, definition }: { key: TKey; definition: TDefinition }): void {
 		this.definitions.set(key, definition);
 	}
 
@@ -93,6 +77,116 @@ const BLEND_MODE_OPTIONS: Array<{ value: BlendMode; label: string }> = [
 	{ value: "luminosity", label: "Luminosity" },
 ];
 
+/**
+ * The Adjust panel, laid out the way a colourist works: what the colour is, then
+ * how the light falls, then what is done to the grain of the picture. Each group
+ * resets as a unit, so a whole pass can be thrown away without touching the rest.
+ *
+ * Every slider here has to reach for something none of its neighbours can. Two
+ * did not, and are gone: Shine was Brightness with a softer roll-off, and Fade
+ * was a black lift plus a saturation drop, which is Shadow and Saturation put
+ * together. The group is called Texture rather than Effects because the tab rail
+ * already has an Effects tab, and two lists under one word is one too many.
+ */
+export const ADJUSTMENT_PARAM_GROUPS: ReadonlyArray<{
+	title: string;
+	keys: readonly string[];
+}> = [
+	{
+		title: "Color",
+		keys: ["adjust.saturation", "adjust.temperature", "adjust.hue"],
+	},
+	{
+		title: "Lightness",
+		keys: [
+			"adjust.brightness",
+			"adjust.contrast",
+			"adjust.highlight",
+			"adjust.shadow",
+		],
+	},
+	{
+		title: "Texture",
+		keys: ["adjust.sharpness", "adjust.vignette", "adjust.grain"],
+	},
+];
+
+/** The keys the Adjust tab lists, in the order it lists them. */
+export const ADJUSTMENT_PARAM_KEYS: readonly string[] =
+	ADJUSTMENT_PARAM_GROUPS.flatMap((group) => [...group.keys]);
+
+/**
+ * Adjust sliders are integers on the same -100..100 scale (0 = leave it alone)
+ * that the adjustment definitions in `@/adjustments` read, so the panel stores
+ * exactly what the maths consumes. `signed: false` is for the ones that only add
+ * — grain cannot be removed from a clean frame — which start at the left instead
+ * of the middle.
+ *
+ * A `trackGradient` is given only where the ramp means something: dark to bright,
+ * cool to warm, grey to saturated. Sliders whose ends have no colour to show, such
+ * as sharpness, keep a plain track rather than a decorative one.
+ */
+function adjustParam({
+	key,
+	label,
+	signed = true,
+	trackGradient,
+}: {
+	key: string;
+	label: string;
+	signed?: boolean;
+	trackGradient?: string;
+}): ElementParamDefinition {
+	return {
+		key: `adjust.${key}`,
+		label,
+		type: "number",
+		default: 0,
+		min: signed ? -100 : 0,
+		max: 100,
+		step: 1,
+		control: "slider",
+		trackGradient,
+	};
+}
+
+const LUMINANCE_GRADIENT = "linear-gradient(to right, #26262e, #ffffff)";
+
+const adjustmentElementParams: ElementParamDefinition[] = [
+	adjustParam({
+		key: "saturation",
+		label: "Saturation",
+		trackGradient: "linear-gradient(to right, #55555f, #22e06a)",
+	}),
+	adjustParam({
+		key: "temperature",
+		label: "Temperature",
+		// The ends mirror the cool/warm washes the temperature adjustment paints.
+		trackGradient: "linear-gradient(to right, #2f9dff, #8b8b96 50%, #ff7a2f)",
+	}),
+	adjustParam({
+		key: "hue",
+		label: "Hue",
+		trackGradient:
+			"linear-gradient(to right, #ff2f6a, #ffd12f, #22e06a, #2f9dff, #a12fff, #ff2f6a)",
+	}),
+	adjustParam({
+		key: "brightness",
+		label: "Brightness",
+		trackGradient: LUMINANCE_GRADIENT,
+	}),
+	adjustParam({
+		key: "contrast",
+		label: "Contrast",
+		trackGradient: LUMINANCE_GRADIENT,
+	}),
+	adjustParam({ key: "highlight", label: "Highlight" }),
+	adjustParam({ key: "shadow", label: "Shadow" }),
+	adjustParam({ key: "sharpness", label: "Sharpness", signed: false }),
+	adjustParam({ key: "vignette", label: "Vignette", signed: false }),
+	adjustParam({ key: "grain", label: "Grain", signed: false }),
+];
+
 const visualElementParams: ElementParamDefinition[] = [
 	{
 		key: "transform.positionX",
@@ -101,6 +195,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.position.x,
 		min: -100_000,
 		step: 1,
+		suffix: "px",
 	},
 	{
 		key: "transform.positionY",
@@ -109,6 +204,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.position.y,
 		min: -100_000,
 		step: 1,
+		suffix: "px",
 	},
 	{
 		key: "transform.scaleX",
@@ -117,6 +213,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.scaleX,
 		min: MIN_TRANSFORM_SCALE,
 		step: 0.01,
+		suffix: "x",
 	},
 	{
 		key: "transform.scaleY",
@@ -125,6 +222,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.scaleY,
 		min: MIN_TRANSFORM_SCALE,
 		step: 0.01,
+		suffix: "x",
 	},
 	{
 		key: "transform.rotate",
@@ -134,6 +232,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		min: -360,
 		max: 360,
 		step: 1,
+		suffix: "°",
 	},
 	{
 		key: "opacity",
@@ -143,6 +242,11 @@ const visualElementParams: ElementParamDefinition[] = [
 		min: 0,
 		max: 1,
 		step: 0.01,
+		unit: "percent",
+		// Reads as one more of the Adjust panel's sliders, which is the only place it
+		// is shown. The slider works in stored 0..1 space while the number field
+		// beside it still shows a percentage.
+		control: "slider",
 	},
 	{
 		key: "blendMode",
@@ -154,6 +258,17 @@ const visualElementParams: ElementParamDefinition[] = [
 	},
 ];
 
+/**
+ * Only footage and stills carry the colour/tone sliders. Grading text, a sticker
+ * or a vector shape means grading something whose colour was chosen outright in
+ * the panel above — the sliders would be fighting the author rather than
+ * correcting a camera.
+ */
+const mediaElementParams: ElementParamDefinition[] = [
+	...visualElementParams,
+	...adjustmentElementParams,
+];
+
 const audioElementParams: ElementParamDefinition[] = [
 	{
 		key: "volume",
@@ -163,6 +278,7 @@ const audioElementParams: ElementParamDefinition[] = [
 		min: VOLUME_DB_MIN,
 		max: VOLUME_DB_MAX,
 		step: 0.01,
+		suffix: "dB",
 	},
 	{
 		key: "muted",
@@ -195,6 +311,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: 15,
 		min: 1,
 		step: 1,
+		suffix: "px",
 	},
 	{
 		key: "color",
@@ -255,6 +372,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.letterSpacing,
 		min: -100,
 		step: 0.1,
+		suffix: "px",
 	},
 	{
 		key: "lineHeight",
@@ -286,6 +404,7 @@ const textElementParams: ElementParamDefinition[] = [
 		min: CORNER_RADIUS_MIN,
 		max: CORNER_RADIUS_MAX,
 		step: 1,
+		suffix: "px",
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
@@ -295,6 +414,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.paddingX,
 		min: 0,
 		step: 1,
+		suffix: "px",
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
@@ -304,6 +424,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.paddingY,
 		min: 0,
 		step: 1,
+		suffix: "px",
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
@@ -313,6 +434,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.offsetX,
 		min: -100_000,
 		step: 1,
+		suffix: "px",
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
@@ -322,20 +444,24 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.offsetY,
 		min: -100_000,
 		step: 1,
+		suffix: "px",
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 ];
 
-export const elementParamRegistry = new DefinitionRegistry<
+const elementParamRegistry = new DefinitionRegistry<
 	ElementType,
 	readonly ElementParamDefinition[]
 >("element params");
 
 elementParamRegistry.register({
 	key: "video",
-	definition: [...visualElementParams, ...audioElementParams],
+	definition: [...mediaElementParams, ...audioElementParams],
 });
-elementParamRegistry.register({ key: "image", definition: visualElementParams });
+elementParamRegistry.register({
+	key: "image",
+	definition: mediaElementParams,
+});
 elementParamRegistry.register({
 	key: "text",
 	definition: [...textElementParams, ...visualElementParams],
@@ -350,6 +476,9 @@ elementParamRegistry.register({
 });
 elementParamRegistry.register({ key: "audio", definition: audioElementParams });
 elementParamRegistry.register({ key: "effect", definition: [] });
+// An adjustment layer has no element-level params of its own; each entry in its
+// stack carries the params from its own definition.
+elementParamRegistry.register({ key: "adjustment", definition: [] });
 
 export function getElementParams({
 	element,
@@ -421,18 +550,4 @@ export function writeElementParamValue({
 	return element;
 }
 
-export function buildElementParamValues({
-	element,
-}: {
-	element: TimelineElement;
-}): ParamValues {
-	const values: ParamValues = {};
-	for (const param of getElementParams({ element })) {
-		const value = readElementParamValue({ element, param });
-		if (value !== null) {
-			values[param.key] = value;
-		}
-	}
-	return values;
-}
 

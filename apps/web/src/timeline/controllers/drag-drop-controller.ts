@@ -13,11 +13,15 @@ import {
 	buildStickerElement,
 	buildElementFromMedia,
 	buildEffectElement,
+	buildAdjustmentElement,
 } from "@/timeline/element-utils";
 import { AddTrackCommand, InsertElementCommand } from "@/commands/timeline";
 import { BatchCommand } from "@/commands";
 import type { Command } from "@/commands/base-command";
-import { computeDropTarget } from "@/timeline/components/drop-target";
+import {
+	computeDropTarget,
+	computeTransitionDropTarget,
+} from "@/timeline/components/drop-target";
 import type { TimelineDragSource } from "@/timeline/drag-source";
 import type {
 	TrackType,
@@ -59,6 +63,16 @@ export interface DragDropConfig {
 		elementId: string;
 		effectType: string;
 	}) => void;
+	setElementTransition: (args: {
+		trackId: string;
+		elementId: string;
+		transitionType: string;
+	}) => void;
+	addAdjustment: (args: {
+		trackId: string;
+		elementId: string;
+		adjustmentType: string;
+	}) => void;
 }
 
 export interface DragDropConfigRef {
@@ -82,10 +96,14 @@ interface TimelineCoords {
 
 // --- Pure helpers ---
 
+/**
+ * Transition drags are excluded: they never create an element, so they take the
+ * hit-test-only path in `onDragOver` instead of resolving a placement.
+ */
 function elementTypeFromDrag({
 	dragData,
 }: {
-	dragData: TimelineDragData;
+	dragData: Exclude<TimelineDragData, { type: "transition" }>;
 }): ElementType {
 	switch (dragData.type) {
 		case "text":
@@ -96,6 +114,8 @@ function elementTypeFromDrag({
 			return "sticker";
 		case "effect":
 			return "effect";
+		case "adjustment":
+			return "adjustment";
 		case "media":
 			return dragData.mediaType;
 	}
@@ -107,6 +127,7 @@ function getTargetElementTypesForDrag({
 	dragData: TimelineDragData;
 }): string[] | undefined {
 	if (dragData.type === "effect") return dragData.targetElementTypes;
+	if (dragData.type === "adjustment") return dragData.targetElementTypes;
 	if (dragData.type === "media") return dragData.targetElementTypes;
 	return undefined;
 }
@@ -200,6 +221,19 @@ export class DragDropController {
 			if (hasFiles && isExternal) {
 				this.setOver({ dropTarget: null, elementType: null });
 			}
+			return;
+		}
+
+		if (dragData.type === "transition") {
+			const target = computeTransitionDropTarget({
+				mouseX: coords.mouseX,
+				mouseY: coords.mouseY,
+				tracks: this.config.getSceneTracks(),
+				pixelsPerSecond: BASE_TIMELINE_PIXELS_PER_SECOND,
+				zoomLevel: this.config.zoomLevel,
+			});
+			this.setOver({ dropTarget: target, elementType: null });
+			event.dataTransfer.dropEffect = target ? "copy" : "none";
 			return;
 		}
 
@@ -371,6 +405,12 @@ export class DragDropController {
 			case "effect":
 				this.executeEffectDrop({ target, dragData });
 				return;
+			case "transition":
+				this.executeTransitionDrop({ target, dragData });
+				return;
+			case "adjustment":
+				this.executeAdjustmentDrop({ target, dragData });
+				return;
 			case "media":
 				this.executeMediaDrop({ target, dragData });
 				return;
@@ -452,6 +492,47 @@ export class DragDropController {
 			startTime: target.xPosition,
 		});
 		this.insertAtTarget({ element, target, trackType });
+	}
+
+	private executeTransitionDrop({
+		target,
+		dragData,
+	}: {
+		target: DropTarget;
+		dragData: Extract<TimelineDragData, { type: "transition" }>;
+	}): void {
+		if (!target.targetElement) {
+			return;
+		}
+
+		this.config.setElementTransition({
+			trackId: target.targetElement.trackId,
+			elementId: target.targetElement.elementId,
+			transitionType: dragData.transitionType,
+		});
+	}
+
+	private executeAdjustmentDrop({
+		target,
+		dragData,
+	}: {
+		target: DropTarget;
+		dragData: Extract<TimelineDragData, { type: "adjustment" }>;
+	}): void {
+		if (target.targetElement) {
+			this.config.addAdjustment({
+				trackId: target.targetElement.trackId,
+				elementId: target.targetElement.elementId,
+				adjustmentType: dragData.adjustmentType,
+			});
+			return;
+		}
+
+		const element = buildAdjustmentElement({
+			adjustmentType: dragData.adjustmentType,
+			startTime: target.xPosition,
+		});
+		this.insertAtTarget({ element, target, trackType: "adjustment" });
 	}
 
 	private executeEffectDrop({

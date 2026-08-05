@@ -11,7 +11,7 @@ import type {
 
 type MediaAudioState = Pick<MediaAsset, "hasAudio">;
 
-export function isSourceAudioEnabled({
+function isSourceAudioEnabled({
 	element,
 }: {
 	element: VideoElement;
@@ -94,10 +94,14 @@ export function buildSeparatedAudioElement({
 					: DEFAULTS.element.volume,
 			muted: sourceElement.params.muted === true,
 		},
+		// The curve comes across with the rate: the detached audio has to walk its
+		// source exactly as the picture does, or the two drift apart the moment the
+		// speed stops being constant.
 		retime: sourceElement.retime
 			? {
 					rate: sourceElement.retime.rate,
 					maintainPitch: sourceElement.retime.maintainPitch,
+					curve: sourceElement.retime.curve,
 				}
 			: undefined,
 		animations: cloneVolumeAnimations({

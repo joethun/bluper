@@ -1,4 +1,5 @@
 import { type RefObject, useLayoutEffect, useRef } from "react";
+import { useCommittedRef } from "@/hooks/use-committed-ref";
 
 interface UseInitialScrollBottomProps {
 	tracksScrollRef: RefObject<HTMLDivElement | null>;
@@ -20,6 +21,12 @@ export function useInitialScrollBottom({
 	isReady,
 }: UseInitialScrollBottomProps): void {
 	const hasScrolledRef = useRef(false);
+	// Callers pass an inline closure, which would change identity on every
+	// render and re-run this layout effect each time. Because the effect bails
+	// out *without* latching when there is nothing to scroll yet, that turned a
+	// once-on-mount measurement into a `scrollHeight` read — and so a forced
+	// synchronous reflow — on every render, including every zoom frame.
+	const onAfterScrollRef = useCommittedRef(onAfterScroll);
 
 	useLayoutEffect(() => {
 		if (!isReady || hasScrolledRef.current) return;
@@ -36,7 +43,7 @@ export function useInitialScrollBottom({
 			trackLabelsScrollRef.current.scrollTop = maxScrollTop;
 		}
 
-		onAfterScroll?.();
+		onAfterScrollRef.current?.();
 		hasScrolledRef.current = true;
-	}, [isReady, tracksScrollRef, trackLabelsScrollRef, onAfterScroll]);
+	}, [isReady, tracksScrollRef, trackLabelsScrollRef, onAfterScrollRef]);
 }

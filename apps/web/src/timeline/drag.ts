@@ -1,4 +1,9 @@
-import type { MaskableElement, VisualElement } from "./types";
+import type {
+	AdjustmentElement,
+	MaskableElement,
+	TransitionableElement,
+	VisualElement,
+} from "./types";
 import type { ParamValues } from "@/params";
 
 interface BaseDragData {
@@ -6,32 +11,50 @@ interface BaseDragData {
 	name: string;
 }
 
-export interface MediaDragData extends BaseDragData {
+interface MediaDragData extends BaseDragData {
 	type: "media";
 	mediaType: "image" | "video" | "audio";
 	targetElementTypes?: MaskableElement["type"][];
 }
 
-export interface TextDragData extends BaseDragData {
+interface TextDragData extends BaseDragData {
 	type: "text";
 	content: string;
 }
 
-export interface StickerDragData extends BaseDragData {
+interface StickerDragData extends BaseDragData {
 	type: "sticker";
 	stickerId: string;
 }
 
-export interface GraphicDragData extends BaseDragData {
+interface GraphicDragData extends BaseDragData {
 	type: "graphic";
 	definitionId: string;
 	params: Partial<ParamValues>;
 }
 
-export interface EffectDragData extends BaseDragData {
+interface EffectDragData extends BaseDragData {
 	type: "effect";
 	effectType: string;
 	targetElementTypes: VisualElement["type"][];
+}
+
+/**
+ * A transition drag never creates an element — it can only land on a clip that
+ * already shares a cut with its neighbour, which is why it carries no duration
+ * or placement information.
+ */
+interface TransitionDragData extends BaseDragData {
+	type: "transition";
+	transitionType: string;
+	targetElementTypes: TransitionableElement["type"][];
+}
+
+interface AdjustmentDragData extends BaseDragData {
+	type: "adjustment";
+	adjustmentType: string;
+	/** Dropping onto an existing adjustment layer appends to its stack. */
+	targetElementTypes: AdjustmentElement["type"][];
 }
 
 export type TimelineDragData =
@@ -39,4 +62,6 @@ export type TimelineDragData =
 	| TextDragData
 	| StickerDragData
 	| GraphicDragData
-	| EffectDragData;
+	| EffectDragData
+	| TransitionDragData
+	| AdjustmentDragData;

@@ -8,9 +8,11 @@ import {
 	hasAnimatedVolume,
 } from "@/timeline/audio-state";
 import { createAudioMasteringChain } from "@/media/audio-mastering";
+import { rememberInCache } from "@/media/audio-cache";
 import {
 	getClipTimeAtSourceTime,
 	getSourceTimeAtClipTime,
+	hasRetimeCurve,
 	renderRetimedBuffer,
 } from "@/retime";
 import {
@@ -20,6 +22,16 @@ import {
 	Input,
 	type WrappedAudioBuffer,
 } from "mediabunny";
+
+/**
+ * How much decoded and rendered audio is kept. Both hold whole clips in memory,
+ * so they are bounded rather than cleared: the point is to survive an edit and a
+ * replay, not to hold a long project's every source at once. A decoded source is
+ * the bigger of the two — it is the whole file, however little of it a clip
+ * uses — so fewer of those are kept.
+ */
+const MAX_CACHED_DECODED_SOURCES = 4;
+const MAX_CACHED_PREPARED_CLIPS = 12;
 
 export class AudioManager {
 	private audioContext: AudioContext | null = null;
@@ -42,6 +54,7 @@ export class AudioManager {
 	private decodedBuffers = new Map<string, Promise<AudioBuffer | null>>();
 	private playbackSessionId = 0;
 	private lastIsPlaying = false;
+	private lastIsScrubbing = false;
 	private lastVolume = 1;
 	private playbackLatencyCompensationSeconds = 0;
 	private unsubscribers: Array<() => void> = [];
@@ -75,6 +88,7 @@ export class AudioManager {
 
 	private handlePlaybackChange = (): void => {
 		const isPlaying = this.editor.playback.getIsPlaying();
+		const isScrubbing = this.editor.playback.getIsScrubbing();
 		const volume = this.editor.playback.getVolume();
 
 		if (volume !== this.lastVolume) {
@@ -82,16 +96,25 @@ export class AudioManager {
 			this.updateGain();
 		}
 
-		if (isPlaying !== this.lastIsPlaying) {
-			this.lastIsPlaying = isPlaying;
-			if (isPlaying) {
-				void this.startPlayback({
-					time: this.editor.playback.getCurrentTime() / TICKS_PER_SECOND,
-				});
-			} else {
-				this.stopPlayback();
-			}
+		const wasPlaying = this.lastIsPlaying;
+		const wasScrubbing = this.lastIsScrubbing;
+		this.lastIsPlaying = isPlaying;
+		this.lastIsScrubbing = isScrubbing;
+
+		if (isPlaying === wasPlaying && isScrubbing === wasScrubbing) return;
+
+		// Scrubbing has to be tracked here, not just in handleSeek: every scrub
+		// step stops audio, and a gesture released mid-playback emits no further
+		// seek to start it again. Without this, audio stays dead until the next
+		// play/pause toggle.
+		if (isPlaying && !isScrubbing) {
+			void this.startPlayback({
+				time: this.editor.playback.getCurrentTime() / TICKS_PER_SECOND,
+			});
+			return;
 		}
+
+		this.stopPlayback();
 	};
 
 	private handleSeek = (time: number): void => {
@@ -108,10 +131,22 @@ export class AudioManager {
 		this.stopPlayback();
 	};
 
+	/**
+	 * Neither audio cache is dropped here.
+	 *
+	 * Decoding a source means reading its every sample, and rendering a retimed
+	 * clip means walking that again — seconds of work for a long file. Both used to
+	 * be thrown away on any timeline notification, so a clip that needed rendering
+	 * started from nothing on every attempt to play it, and lost the race against
+	 * its own playback often enough that it took several tries to hear it.
+	 *
+	 * Neither cache can go stale. Decoded audio is keyed by its source and comes
+	 * from an unchanging file; a rendered clip is keyed by the timing and retime it
+	 * was rendered for, so an edit asks a different question and gets a different
+	 * entry. What they need is a bound, not invalidation — see `rememberInCache`.
+	 */
 	private handleTimelineChange = (): void => {
 		this.disposeSinks();
-		this.preparedClipBuffers.clear();
-		this.decodedBuffers.clear();
 
 		if (!this.editor.playback.getIsPlaying()) return;
 
@@ -166,9 +201,18 @@ export class AudioManager {
 
 		this.clips = await collectAudioClips({ tracks, mediaAssets });
 		if (!this.editor.playback.getIsPlaying()) return;
+		// A scrub can begin while the awaits above are in flight; its stopPlayback
+		// already ran, so scheduling now would leave audio running under the drag.
+		if (this.editor.playback.getIsScrubbing()) return;
 
 		this.playbackStartTime = time;
 		this.playbackStartContextTime = audioContext.currentTime;
+
+		// Clips that have to be rendered before they can be heard are started now
+		// rather than when the playhead is a lookahead away from them. A retimed
+		// clip sitting under the playhead has no lead time at all otherwise: the
+		// render begins at the moment its audio is already due.
+		this.warmPreparedClipBuffers({ fromTime: time });
 
 		this.scheduleUpcomingClips();
 
@@ -207,6 +251,18 @@ export class AudioManager {
 					sessionId: this.playbackSessionId,
 				});
 			}
+		}
+	}
+
+	private warmPreparedClipBuffers({ fromTime }: { fromTime: number }): void {
+		for (const clip of this.clips) {
+			if (clip.muted) continue;
+			if (clip.startTime + clip.duration <= fromTime) continue;
+			if (!this.shouldUsePreparedClipBuffer({ clip })) continue;
+
+			// Fire and forget: the result is cached, so whoever schedules the clip
+			// picks up this same render rather than starting another.
+			void this.getPreparedClipBuffer({ clip });
 		}
 	}
 
@@ -262,6 +318,7 @@ export class AudioManager {
 			clip.trimStart +
 			getSourceTimeAtClipTime({
 				clipTime: iteratorStartTime - clip.startTime,
+				clipDuration: clip.duration,
 				retime: clip.retime,
 			});
 
@@ -277,6 +334,7 @@ export class AudioManager {
 				clip.startTime +
 				getClipTimeAtSourceTime({
 					sourceTime: timestamp - clip.trimStart,
+					clipDuration: clip.duration,
 					retime: clip.retime,
 				});
 			if (timelineTime >= clipEnd) break;
@@ -362,7 +420,17 @@ export class AudioManager {
 		if (!audioContext) return;
 
 		const buffer = await this.getPreparedClipBuffer({ clip });
-		if (!buffer || !this.editor.playback.getIsPlaying()) return;
+		if (!buffer) {
+			// Nothing came back, so this clip is not on its way to being heard.
+			// Releasing it puts it back in front of the scheduler, which comes round
+			// again every `scheduleIntervalMs` — a clip whose audio was still being
+			// rendered then starts as soon as it is ready, instead of staying silent
+			// until the user stops and plays again. A clip that genuinely cannot be
+			// prepared answers from cache, so retrying it costs nothing.
+			this.activeClipIds.delete(clip.id);
+			return;
+		}
+		if (!this.editor.playback.getIsPlaying()) return;
 		if (sessionId !== this.playbackSessionId) return;
 
 		const clipStart = clip.startTime;
@@ -454,24 +522,25 @@ export class AudioManager {
 		this.sinks.clear();
 	}
 
+	/**
+	 * Whether a clip has to be rendered up front instead of streamed. Streaming
+	 * plays decoded chunks through a buffer source, which can only hold one
+	 * playback rate, so a speed curve — like animated volume or pitch
+	 * preservation — needs the whole clip laid out in advance.
+	 */
 	private shouldUsePreparedClipBuffer({
 		clip,
 	}: {
 		clip: AudioClipSource;
 	}): boolean {
 		return (
-			this.hasCurveRetime({ clip }) ||
+			hasRetimeCurve({ retime: clip.retime }) ||
 			hasAnimatedVolume({ element: clip.timelineElement }) ||
 			shouldMaintainPitch({
 				rate: clip.retime?.rate ?? 1,
 				maintainPitch: clip.retime?.maintainPitch,
 			})
 		);
-	}
-
-	private hasCurveRetime({ clip }: { clip: AudioClipSource }): boolean {
-		const mode = (clip.retime as { mode?: unknown } | undefined)?.mode;
-		return mode === "curve";
 	}
 
 	private scheduleClipGainAutomation({
@@ -563,9 +632,21 @@ export class AudioManager {
 				retime: clip.retime,
 				maintainPitch: clip.retime?.maintainPitch === true,
 			});
-		})();
+		})().catch((error) => {
+			// A rejection has to become a cached `null` rather than a cached
+			// rejection: the entry is read again on every scheduling pass, and a
+			// stored rejection would both go unhandled and keep the clip silent for
+			// as long as the entry lived.
+			console.warn("Failed to prepare clip audio:", error);
+			return null;
+		});
 
-		this.preparedClipBuffers.set(cacheKey, promise);
+		rememberInCache({
+			cache: this.preparedClipBuffers,
+			key: cacheKey,
+			value: promise,
+			limit: MAX_CACHED_PREPARED_CLIPS,
+		});
 		return promise;
 	}
 
@@ -580,7 +661,12 @@ export class AudioManager {
 		}
 
 		const promise = this.decodeClipBuffer({ clip });
-		this.decodedBuffers.set(clip.sourceKey, promise);
+		rememberInCache({
+			cache: this.decodedBuffers,
+			key: clip.sourceKey,
+			value: promise,
+			limit: MAX_CACHED_DECODED_SOURCES,
+		});
 		return promise;
 	}
 

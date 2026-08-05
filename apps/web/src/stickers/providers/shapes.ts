@@ -73,7 +73,7 @@ function getShapeParams({
 	};
 }
 
-export function parseShapeStickerId({
+function parseShapeStickerId({
 	stickerId,
 }: {
 	stickerId: string;

@@ -9,13 +9,8 @@ import type {
 	MaskRenderer,
 	MaskType,
 } from "@/masks/types";
-import type { HugeiconsIconProps } from "@hugeicons/react";
+import type { LucideIcon } from "lucide-react";
 import { DefinitionRegistry } from "@/params/registry";
-
-export type MaskIconProps = {
-	icon: HugeiconsIconProps["icon"];
-	strokeWidth?: number;
-};
 
 type RegisteredMaskWithoutId = Mask extends infer TMask
 	? TMask extends Mask
@@ -27,7 +22,7 @@ export type MaskDefinitionForRegistration = {
 	[TType in MaskType]: MaskDefinition<TType>;
 }[MaskType];
 
-export const BASE_MASK_PARAM_DEFINITIONS: ParamDefinition<
+const BASE_MASK_PARAM_DEFINITIONS: ParamDefinition<
 	keyof BaseMaskParams & string
 >[] = [
 	{
@@ -57,7 +52,7 @@ export const BASE_MASK_PARAM_DEFINITIONS: ParamDefinition<
 	},
 ];
 
-export interface RegisteredMaskDefinition {
+interface RegisteredMaskDefinition {
 	type: MaskType;
 	name: string;
 	features: MaskDefinition["features"];
@@ -69,10 +64,10 @@ export interface RegisteredMaskDefinition {
 	computeParamUpdate(
 		args: MaskParamUpdateArgs<BaseMaskParams>,
 	): Partial<BaseMaskParams>;
-	icon: MaskIconProps;
+	icon: LucideIcon;
 }
 
-export class MasksRegistry extends DefinitionRegistry<
+class MasksRegistry extends DefinitionRegistry<
 	MaskType,
 	RegisteredMaskDefinition
 > {
@@ -85,7 +80,7 @@ export class MasksRegistry extends DefinitionRegistry<
 		icon,
 	}: {
 		definition: MaskDefinitionForRegistration;
-		icon: MaskIconProps;
+		icon: LucideIcon;
 	}): void {
 		const withBaseParams: RegisteredMaskDefinition = {
 			type: definition.type,

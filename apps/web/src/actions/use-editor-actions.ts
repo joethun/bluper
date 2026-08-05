@@ -17,6 +17,7 @@ import {
 } from "@/wasm";
 import { useKeyframeSelection } from "@/timeline/hooks/element/use-keyframe-selection";
 import { getElementsAtTime, hasMediaId } from "@/timeline";
+import { findFreezeTarget } from "@/freeze";
 import { cancelInteraction } from "@/editor/cancel-interaction";
 import { invokeAction } from "@/actions";
 import { canToggleSourceAudio } from "@/timeline/audio-separation";
@@ -292,6 +293,28 @@ export function useEditorActions() {
 				elements: elementsToSplit,
 				splitTime: currentTime,
 				retainSide: "left",
+			});
+		},
+		undefined,
+	);
+
+	useActionHandler(
+		"freeze-frame",
+		() => {
+			const currentTime = editor.playback.getCurrentTime();
+			const target = findFreezeTarget({
+				tracks: editor.scenes.getActiveScene().tracks,
+				time: currentTime,
+				selectedElements,
+			});
+			if (!target) return;
+
+			// Freezing inside a transition renders the blended frame first, so this
+			// resolves a beat later; nothing here depends on the result.
+			void editor.timeline.freezeFrame({
+				trackId: target.trackId,
+				elementId: target.elementId,
+				freezeTime: currentTime,
 			});
 		},
 		undefined,

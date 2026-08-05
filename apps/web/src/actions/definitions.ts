@@ -1,7 +1,7 @@
 import type { ShortcutKey } from "@/actions/keybinding";
 import type { TActionWithOptionalArgs } from "./types";
 
-export type TActionCategory =
+type TActionCategory =
 	| "playback"
 	| "navigation"
 	| "editing"
@@ -78,6 +78,10 @@ export const ACTIONS = {
 		description: "Split and remove right",
 		category: "editing",
 	},
+	"freeze-frame": {
+		description: "Freeze frame at playhead",
+		category: "editing",
+	},
 	"delete-selected": {
 		description: "Delete current selection",
 		category: "editing",
@@ -152,6 +156,31 @@ export const ACTIONS = {
 
 export type TAction = keyof typeof ACTIONS;
 
+const ACTION_SET: ReadonlySet<string> = new Set(Object.keys(ACTIONS));
+
+// Actions whose args are mandatory, so they can never be bound to a bare shortcut.
+const ACTIONS_REQUIRING_ARGS = [
+	"remove-media-asset",
+	"remove-media-assets",
+] as const satisfies ReadonlyArray<Exclude<TAction, TActionWithOptionalArgs>>;
+
+const ACTIONS_REQUIRING_ARGS_SET: ReadonlySet<string> = new Set(
+	ACTIONS_REQUIRING_ARGS,
+);
+
+/**
+ * Validate an untrusted string (persisted state, imported config) as an action
+ * that is invocable without arguments.
+ *
+ * Checks membership in `ACTIONS` rather than the defaults table, so actions that
+ * ship without a default shortcut are still accepted.
+ */
+export function isActionWithOptionalArgs(
+	value: string,
+): value is TActionWithOptionalArgs {
+	return ACTION_SET.has(value) && !ACTIONS_REQUIRING_ARGS_SET.has(value);
+}
+
 const ACTION_DEFAULT_SHORTCUTS = [
 	["toggle-play", ["space", "k"]],
 	["seek-forward", ["l"]],
@@ -165,6 +194,7 @@ const ACTION_DEFAULT_SHORTCUTS = [
 	["split", ["s"]],
 	["split-left", ["q"]],
 	["split-right", ["w"]],
+	["freeze-frame", ["shift+f"]],
 	["delete-selected", ["backspace", "delete"]],
 	["copy-selected", ["ctrl+c"]],
 	["paste-copied", ["ctrl+v"]],

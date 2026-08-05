@@ -5,7 +5,7 @@ const MASTER_LIMITER_ATTACK_SECONDS = 0.001;
 const MASTER_LIMITER_RELEASE_SECONDS = 0.12;
 const MASTER_OUTPUT_HEADROOM = 0.98;
 
-export function getAudioBufferPeak({
+function getAudioBufferPeak({
 	audioBuffer,
 }: {
 	audioBuffer: AudioBuffer;

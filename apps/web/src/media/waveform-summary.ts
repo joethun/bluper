@@ -3,33 +3,38 @@
 import { getSourceTimeAtClipTime } from "@/retime";
 import type { RetimeConfig } from "@/timeline";
 
-const RMS_ANALYSIS_WINDOW_SECONDS = 0.02;
 const DEFAULT_SOURCE_WAVEFORM_BUCKET_SIZE = 128;
 
-function computePeakBuckets({
-	buffer,
-	buckets,
-}: {
-	buffer: AudioBuffer;
-	buckets: SampleBucket[];
-}): number[] {
-	const channels = buffer.numberOfChannels;
-	const channelData: Float32Array[] = Array.from({ length: channels }, (_, c) =>
-		buffer.getChannelData(c),
-	);
+// Buckets processed between yields. Sized so one slice stays in single-digit
+// milliseconds even on slow machines, keeping the main thread responsive while
+// summarising long sources.
+const PEAK_BUCKETS_PER_SLICE = 4096;
 
-	return buckets.map(({ bucketStart, bucketEnd }) => {
-		let peak = 0;
-		for (let c = 0; c < channels; c++) {
-			const data = channelData[c];
-			for (let j = bucketStart; j < bucketEnd; j++) {
-				const abs = Math.abs(data[j] ?? 0);
-				if (abs > peak) {
-					peak = abs;
-				}
-			}
+/**
+ * Hands control back to the browser so a long summary pass cannot block input
+ * or painting. `scheduler.yield` resumes at higher priority than a task posted
+ * via setTimeout, so prefer it where available; MessageChannel is the fallback
+ * because setTimeout is clamped to ~4ms per call, which would dominate the
+ * total time once there are dozens of slices.
+ */
+function yieldToMainThread(): Promise<void> {
+	const scheduler = (
+		globalThis as {
+			scheduler?: { yield?: () => Promise<void> };
 		}
-		return peak;
+	).scheduler;
+
+	if (typeof scheduler?.yield === "function") {
+		return scheduler.yield();
+	}
+
+	return new Promise((resolve) => {
+		const channel = new MessageChannel();
+		channel.port1.onmessage = () => {
+			channel.port1.close();
+			resolve();
+		};
+		channel.port2.postMessage(undefined);
 	});
 }
 
@@ -56,7 +61,7 @@ export function buildWaveformSourceKey({
 	return `${kind}:${id}`;
 }
 
-export function buildSourceWaveformSummary({
+export async function buildSourceWaveformSummary({
 	sourceKey,
 	buffer,
 	bucketSize = DEFAULT_SOURCE_WAVEFORM_BUCKET_SIZE,
@@ -64,24 +69,58 @@ export function buildSourceWaveformSummary({
 	sourceKey: string;
 	buffer: AudioBuffer;
 	bucketSize?: number;
-}): SourceWaveformSummary {
+}): Promise<SourceWaveformSummary> {
 	const safeBucketSize = Math.max(1, Math.floor(bucketSize));
-	const bucketCount = Math.max(1, Math.ceil(buffer.length / safeBucketSize));
-	const amplitudes = computePeakBuckets({
-		buffer,
-		buckets: Array.from({ length: bucketCount }, (_, bucketIndex) => {
+	const totalSamples = buffer.length;
+	const bucketCount = Math.max(1, Math.ceil(totalSamples / safeBucketSize));
+	const channels = buffer.numberOfChannels;
+
+	const channelData: Float32Array[] = new Array(channels);
+	for (let c = 0; c < channels; c++) {
+		channelData[c] = buffer.getChannelData(c);
+	}
+
+	// Peaks are written straight into the output buffer: deriving each bucket's
+	// sample range from its index avoids materialising one descriptor object per
+	// bucket (hundreds of thousands for a long source) and skips the boxed
+	// number[] that previously had to be copied into a Float32Array afterwards.
+	const amplitudes = new Float32Array(bucketCount);
+
+	let bucketIndex = 0;
+	while (bucketIndex < bucketCount) {
+		const sliceEnd = Math.min(bucketCount, bucketIndex + PEAK_BUCKETS_PER_SLICE);
+
+		for (; bucketIndex < sliceEnd; bucketIndex++) {
 			const bucketStart = bucketIndex * safeBucketSize;
-			const bucketEnd = Math.min(buffer.length, bucketStart + safeBucketSize);
-			return { bucketStart, bucketEnd };
-		}),
-	});
+			const bucketEnd = Math.min(totalSamples, bucketStart + safeBucketSize);
+			let peak = 0;
+
+			for (let c = 0; c < channels; c++) {
+				const data = channelData[c];
+				// bucketEnd is clamped to the buffer length, so every read is in
+				// range; an unguarded load keeps this on the fast float path.
+				for (let j = bucketStart; j < bucketEnd; j++) {
+					const abs = Math.abs(data[j]);
+					if (abs > peak) {
+						peak = abs;
+					}
+				}
+			}
+
+			amplitudes[bucketIndex] = peak;
+		}
+
+		if (bucketIndex < bucketCount) {
+			await yieldToMainThread();
+		}
+	}
 
 	return {
 		sourceKey,
 		sampleRate: buffer.sampleRate,
-		totalSamples: buffer.length,
+		totalSamples,
 		bucketSize: safeBucketSize,
-		amplitudes: Float32Array.from(amplitudes),
+		amplitudes,
 	};
 }
 
@@ -123,12 +162,14 @@ export function buildWaveformSampleBuckets({
 			sourceStartSec +
 			getSourceTimeAtClipTime({
 				clipTime: clipStartSec,
+				clipDuration: clipDurationSec,
 				retime,
 			});
 		const sourceBucketEndSec =
 			sourceStartSec +
 			getSourceTimeAtClipTime({
 				clipTime: clipEndSec,
+				clipDuration: clipDurationSec,
 				retime,
 			});
 
@@ -175,59 +216,4 @@ export function sampleSourceWaveformSummary({
 	});
 }
 
-export function computeRmsBuckets({
-	buffer,
-	buckets,
-}: {
-	buffer: AudioBuffer;
-	buckets: SampleBucket[];
-}): number[] {
-	const channels = buffer.numberOfChannels;
-	const maxWindowLength = Math.max(
-		1,
-		Math.floor(buffer.sampleRate * RMS_ANALYSIS_WINDOW_SECONDS),
-	);
 
-	const channelData: Float32Array[] = new Array(channels);
-	for (let c = 0; c < channels; c++) {
-		channelData[c] = buffer.getChannelData(c);
-	}
-
-	const result = new Array<number>(buckets.length);
-
-	for (let i = 0; i < buckets.length; i++) {
-		const { bucketStart, bucketEnd } = buckets[i];
-		const bucketLength = bucketEnd - bucketStart;
-		if (bucketLength <= 0) {
-			result[i] = 0;
-			continue;
-		}
-
-		const windowLength = Math.max(1, Math.min(bucketLength, maxWindowLength));
-		let maxMeanSquare = 0;
-
-		for (let winStart = bucketStart; winStart < bucketEnd; ) {
-			const winEnd = Math.min(winStart + windowLength, bucketEnd);
-			const n = winEnd - winStart;
-			if (n > 0) {
-				let sum = 0;
-				for (let c = 0; c < channels; c++) {
-					const data = channelData[c];
-					for (let j = winStart; j < winEnd; j++) {
-						const v = data[j];
-						sum += v * v;
-					}
-				}
-				const meanSquare = sum / (n * channels);
-				if (meanSquare > maxMeanSquare) {
-					maxMeanSquare = meanSquare;
-				}
-			}
-			winStart = winEnd;
-		}
-
-		result[i] = Math.sqrt(maxMeanSquare);
-	}
-
-	return result;
-}

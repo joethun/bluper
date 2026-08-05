@@ -5,10 +5,6 @@ import type { ParamValues } from "@/params";
 import { graphicsRegistry } from "./registry";
 import {
 	registerDefaultGraphics,
-	ellipseGraphicDefinition,
-	polygonGraphicDefinition,
-	rectangleGraphicDefinition,
-	starGraphicDefinition,
 } from "./definitions";
 import {
 	DEFAULT_GRAPHIC_SOURCE_SIZE,
@@ -60,7 +56,7 @@ export function buildDefaultGraphicInstance({
 	};
 }
 
-export function resolveGraphicParams({
+function resolveGraphicParams({
 	definition,
 	params,
 }: {
@@ -141,15 +137,7 @@ export function buildGraphicPreviewUrl({
 
 export {
 	DEFAULT_GRAPHIC_SOURCE_SIZE,
-	ellipseGraphicDefinition,
 	graphicsRegistry,
-	polygonGraphicDefinition,
-	rectangleGraphicDefinition,
 	registerDefaultGraphics,
-	starGraphicDefinition,
 };
-export type {
-	GraphicDefinition,
-	GraphicInstance,
-	GraphicRenderContext,
-} from "./types";
+export type { GraphicDefinition, GraphicInstance } from "./types";

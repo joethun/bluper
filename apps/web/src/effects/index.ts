@@ -3,10 +3,11 @@ import { buildDefaultParamValues } from "@/params/registry";
 import { effectsRegistry } from "./registry";
 import type { ParamValues } from "@/params";
 import type { Effect, EffectDefinition, EffectPass } from "@/effects/types";
-import { VISUAL_ELEMENT_TYPES } from "@/timeline";
 
 export { effectsRegistry } from "./registry";
-export { registerDefaultEffects } from "./definitions";
+export { EFFECT_GROUPS, registerDefaultEffects } from "./definitions";
+export { resolveCanvasEffects } from "./clip";
+export { hashResolvedEffects, paintEffectedLayer } from "./paint";
 
 export function resolveEffectPasses({
 	definition,
@@ -19,6 +20,9 @@ export function resolveEffectPasses({
 	width: number;
 	height: number;
 }): EffectPass[] {
+	if (!definition.renderer) {
+		return [];
+	}
 	if (definition.renderer.buildPasses) {
 		return definition.renderer.buildPasses({ effectParams, width, height });
 	}
@@ -27,8 +31,6 @@ export function resolveEffectPasses({
 		uniforms: pass.uniforms({ effectParams, width, height }),
 	}));
 }
-
-export const EFFECT_TARGET_ELEMENT_TYPES = VISUAL_ELEMENT_TYPES;
 
 export function buildDefaultEffectInstance({
 	effectType,

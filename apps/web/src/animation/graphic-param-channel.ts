@@ -5,7 +5,7 @@ import type {
 import type { ParamDefinition, ParamValues } from "@/params";
 import { resolveAnimationPathValueAtTime } from "./resolve";
 
-export const GRAPHIC_PARAM_PATH_PREFIX = "params.";
+const GRAPHIC_PARAM_PATH_PREFIX = "params.";
 
 export function buildGraphicParamPath({
 	paramKey,

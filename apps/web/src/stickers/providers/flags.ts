@@ -73,7 +73,7 @@ function findMatchingRegions({
 	);
 }
 
-export function resolveQueryToRegions({
+function resolveQueryToRegions({
 	query,
 }: {
 	query: string;
@@ -85,18 +85,6 @@ export function resolveQueryToRegions({
 
 	const matched = findMatchingRegions({ query });
 	return matched.length > 0 ? new Set(matched.map((r) => r.id)) : null;
-}
-
-export function getRegionLabel({ query }: { query: string }): string {
-	if (REGION_GROUPS[query]) {
-		return query
-			.split(" ")
-			.map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-			.join(" ");
-	}
-
-	const matched = findMatchingRegions({ query });
-	return matched[0]?.id ?? query;
 }
 
 function filterCountriesByQuery({

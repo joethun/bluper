@@ -6,8 +6,8 @@ import type { ParamValues } from "@/params";
 import { removeElementKeyframe } from "./keyframes";
 import { resolveAnimationPathValueAtTime } from "./resolve";
 
-export const EFFECT_PARAM_PATH_PREFIX = "effects.";
-export const EFFECT_PARAM_PATH_SUFFIX = ".params.";
+const EFFECT_PARAM_PATH_PREFIX = "effects.";
+const EFFECT_PARAM_PATH_SUFFIX = ".params.";
 
 export function buildEffectParamPath({
 	effectId,

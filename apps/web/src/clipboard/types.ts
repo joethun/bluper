@@ -33,18 +33,18 @@ export interface KeyframeClipboardItem {
 	curvePatches: KeyframeClipboardCurvePatch[];
 }
 
-export interface ElementsClipboardEntry {
+interface ElementsClipboardEntry {
 	type: "elements";
 	items: ElementClipboardItem[];
 }
 
-export interface KeyframesClipboardEntry {
+interface KeyframesClipboardEntry {
 	type: "keyframes";
 	sourceElement: ElementRef;
 	items: KeyframeClipboardItem[];
 }
 
-export interface ClipboardEntryByType {
+interface ClipboardEntryByType {
 	elements: ElementsClipboardEntry;
 	keyframes: KeyframesClipboardEntry;
 }

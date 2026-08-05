@@ -12,18 +12,8 @@ import type {
 	VideoElement,
 	VideoTrack,
 } from "@/timeline";
-import type { Transform } from "@/rendering";
 import { resolveTrackPlacement } from "@/timeline/placement";
 import { mediaTime, ZERO_MEDIA_TIME } from "@/wasm";
-
-function buildTransform(): Transform {
-	return {
-		scaleX: 1,
-		scaleY: 1,
-		position: { x: 0, y: 0 },
-		rotate: 0,
-	};
-}
 
 type TestElement = AudioElement | GraphicElement | TextElement | VideoElement;
 
@@ -648,7 +638,7 @@ describe("resolveTrackPlacement", () => {
 			trackId: "video-main",
 			trackIndex: 0,
 			trackType: "video",
-			adjustedStartTime: 0,
+			adjustedStartTime: ZERO_MEDIA_TIME,
 		});
 	});
 

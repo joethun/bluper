@@ -1,25 +1,11 @@
 import type { TrackType } from "@/timeline";
 import {
-	KEYFRAME_LANE_HEIGHT_PX,
 	TIMELINE_TRACK_GAP_PX,
 	TIMELINE_TRACK_HEIGHTS_PX,
 } from "./layout";
 
 export function getTrackHeight({ type }: { type: TrackType }): number {
 	return TIMELINE_TRACK_HEIGHTS_PX[type];
-}
-
-export function getExpandedTrackHeight({
-	type,
-	expandedLaneCount,
-}: {
-	type: TrackType;
-	expandedLaneCount: number;
-}): number {
-	return (
-		TIMELINE_TRACK_HEIGHTS_PX[type] +
-		expandedLaneCount * KEYFRAME_LANE_HEIGHT_PX
-	);
 }
 
 export function getCumulativeHeightBefore({

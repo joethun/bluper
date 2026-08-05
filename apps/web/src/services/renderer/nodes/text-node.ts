@@ -1,6 +1,8 @@
 import { BaseNode } from "./base-node";
+import type { ResolvedAdjustments } from "@/adjustments/types";
+import type { ParamValues } from "@/params";
 import type { TextElement } from "@/timeline";
-import type { EffectPass } from "@/effects/types";
+import type { EffectPass, ResolvedEffect } from "@/effects/types";
 import type { BlendMode, Transform } from "@/rendering";
 import { drawMeasuredTextLayout } from "@/text/primitives";
 import type { MeasuredTextElement } from "@/text/measure-element";
@@ -12,14 +14,19 @@ export type TextNodeParams = TextElement & {
 	canvasCenter: { x: number; y: number };
 	canvasHeight: number;
 	textBaseline?: CanvasTextBaseline;
+	/** The clip's Adjust sliders as stored, folded per frame so they keyframe. */
+	adjustParams?: ParamValues;
 };
 
 export interface ResolvedTextNodeState {
 	transform: Transform;
 	opacity: number;
+	adjustments: ResolvedAdjustments | null;
 	textColor: string;
 	backgroundColor: string;
 	effectPasses: EffectPass[][];
+	/** The stack entries that paint on the canvas, in stack order. */
+	canvasEffects: ResolvedEffect[];
 	measuredText: MeasuredTextElement;
 }
 

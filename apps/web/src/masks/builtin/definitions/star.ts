@@ -6,8 +6,8 @@ import {
 	getBoxLikeGeometry,
 	getDefaultSquareMaskParams,
 	getStrokeOffset,
-	rotatePoint,
 } from "../box-like";
+import { rotatePointAround } from "@/utils/geometry";
 
 const STAR_INNER_RADIUS_RATIO = 0.45;
 const STAR_VERTEX_COUNT = 10;
@@ -36,7 +36,7 @@ function buildStarPath({
 			? halfHeight
 			: halfHeight * STAR_INNER_RADIUS_RATIO;
 		const angle = (index * Math.PI) / 5 - Math.PI / 2;
-		const point = rotatePoint({
+		const point = rotatePointAround({
 			x: centerX + radiusX * Math.cos(angle),
 			y: centerY + radiusY * Math.sin(angle),
 			centerX,

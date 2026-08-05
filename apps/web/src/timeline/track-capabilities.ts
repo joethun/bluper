@@ -1,4 +1,5 @@
 import type {
+	AdjustmentTrack,
 	TimelineTrack,
 	VideoTrack,
 	AudioTrack,
@@ -15,6 +16,11 @@ export function canTrackHaveAudio(
 
 export function canTrackBeHidden(
 	track: TimelineTrack,
-): track is VideoTrack | TextTrack | GraphicTrack | EffectTrack {
+): track is
+	| VideoTrack
+	| TextTrack
+	| GraphicTrack
+	| EffectTrack
+	| AdjustmentTrack {
 	return track.type !== "audio";
 }

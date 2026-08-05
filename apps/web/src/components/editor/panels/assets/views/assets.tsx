@@ -49,15 +49,15 @@ import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { cn } from "@/utils/ui";
 import {
-	CloudUploadIcon,
-	GridViewIcon,
-	LeftToRightListDashIcon,
-	SortingOneNineIcon,
-	Image02Icon,
-	MusicNote03Icon,
-	Video01Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
+	ArrowUpDownIcon,
+	ImageIcon,
+	LayoutGridIcon,
+	ListIcon,
+	type LucideIcon,
+	MusicIcon,
+	UploadIcon,
+	VideoIcon,
+} from "lucide-react";
 
 export function MediaView() {
 	const editor = useEditor();
@@ -408,12 +408,12 @@ function MediaDurationLabel({ duration }: { duration?: number }) {
 }
 
 function MediaTypePlaceholder({
-	icon,
+	icon: Icon,
 	label,
 	duration,
 	variant,
 }: {
-	icon: IconSvgElement;
+	icon: LucideIcon;
 	label: string;
 	duration?: number;
 	variant: "muted" | "bordered";
@@ -427,7 +427,7 @@ function MediaTypePlaceholder({
 				variant === "muted" ? "bg-muted/30" : "border",
 			)}
 		>
-			<HugeiconsIcon icon={icon} className={iconClassName} />
+			<Icon className={iconClassName} />
 			<span className="text-xs">{label}</span>
 			<MediaDurationLabel duration={duration} />
 		</div>
@@ -481,7 +481,7 @@ function MediaPreview({
 
 		return (
 			<MediaTypePlaceholder
-				icon={Video01Icon}
+				icon={VideoIcon}
 				label="Video"
 				duration={item.duration}
 				variant="muted"
@@ -492,7 +492,7 @@ function MediaPreview({
 	if (item.type === "audio") {
 		return (
 			<MediaTypePlaceholder
-				icon={MusicNote03Icon}
+				icon={MusicIcon}
 				label="Audio"
 				duration={item.duration}
 				variant="bordered"
@@ -501,7 +501,7 @@ function MediaPreview({
 	}
 
 	return (
-		<MediaTypePlaceholder icon={Image02Icon} label="Unknown" variant="muted" />
+		<MediaTypePlaceholder icon={ImageIcon} label="Unknown" variant="muted" />
 	);
 }
 
@@ -537,9 +537,9 @@ function MediaActions({
 							className="items-center justify-center"
 						>
 							{mediaViewMode === "grid" ? (
-								<HugeiconsIcon icon={LeftToRightListDashIcon} />
+								<ListIcon />
 							) : (
-								<HugeiconsIcon icon={GridViewIcon} />
+								<LayoutGridIcon />
 							)}
 						</Button>
 					</TooltipTrigger>
@@ -561,7 +561,7 @@ function MediaActions({
 									disabled={isProcessing}
 									className="items-center justify-center"
 								>
-									<HugeiconsIcon icon={SortingOneNineIcon} />
+									<ArrowUpDownIcon />
 								</Button>
 							</DropdownMenuTrigger>
 						</TooltipTrigger>
@@ -611,7 +611,7 @@ function MediaActions({
 				size="sm"
 				className="items-center justify-center gap-1.5"
 			>
-				<HugeiconsIcon icon={CloudUploadIcon} />
+				<UploadIcon />
 				Import
 			</Button>
 		</div>

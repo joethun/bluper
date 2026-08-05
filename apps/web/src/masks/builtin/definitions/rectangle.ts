@@ -6,8 +6,8 @@ import {
 	getBoxLikeGeometry,
 	getDefaultSquareMaskParams,
 	getStrokeOffset,
-	rotatePoint,
 } from "../box-like";
+import { rotatePointAround } from "@/utils/geometry";
 
 function buildRectanglePath({
 	centerX,
@@ -28,7 +28,7 @@ function buildRectanglePath({
 		{ x: centerX + halfWidth, y: centerY + halfHeight },
 		{ x: centerX - halfWidth, y: centerY + halfHeight },
 	].map((point) =>
-		rotatePoint({
+		rotatePointAround({
 			...point,
 			centerX,
 			centerY,

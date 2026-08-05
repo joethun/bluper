@@ -17,7 +17,7 @@ export function clampDb(value: number): number {
 	return Math.min(VOLUME_DB_MAX, Math.max(VOLUME_DB_MIN, value));
 }
 
-export function dBToLinear(db: number): number {
+function dBToLinear(db: number): number {
 	return 10 ** (clampDb(db) / 20);
 }
 

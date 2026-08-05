@@ -144,6 +144,13 @@ export class SeekController {
 		if (!shouldProcess) return;
 
 		this.config.clearSelectedElements();
+
+		// Ruler surfaces seek through the playhead scrub gesture, which lands the
+		// playhead on mousedown. Seeking again on the follow-up click would replay
+		// that same time after playback has moved past it, so the click is only
+		// good for clearing the selection here.
+		if (source === "ruler") return;
+
 		this.seekFromEvent({ event, source });
 	}
 

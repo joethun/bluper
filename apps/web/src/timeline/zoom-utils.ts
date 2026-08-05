@@ -46,7 +46,7 @@ export function getTimelinePaddingPx({
 	return containerWidth * paddingRatio;
 }
 
-export function getZoomPercent({
+function getZoomPercent({
 	zoomLevel,
 	minZoom,
 }: {

@@ -1,4 +1,4 @@
-import { getGuideById, type GuideId } from "@/guides";
+import { getGuideById, type GuideId } from "./registry";
 import {
 	EMPTY_PREVIEW_OVERLAY_SOURCE_RESULT,
 	type PreviewOverlaySourceResult,

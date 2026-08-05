@@ -1,5 +1,6 @@
 import { DEFAULT_TRACK_NAMES } from "@/timeline/tracks";
 import type {
+	AdjustmentTrack,
 	AudioTrack,
 	EffectTrack,
 	GraphicTrack,
@@ -54,6 +55,15 @@ export function buildEmptyTrack({
 	type: "effect";
 	name?: string;
 }): EffectTrack;
+export function buildEmptyTrack({
+	id,
+	type,
+	name,
+}: {
+	id: string;
+	type: "adjustment";
+	name?: string;
+}): AdjustmentTrack;
 
 export function buildEmptyTrack({
 	id,
@@ -114,6 +124,14 @@ export function buildEmptyTrack({
 				id,
 				name: trackName,
 				type: "effect",
+				elements: [],
+				hidden: false,
+			};
+		case "adjustment":
+			return {
+				id,
+				name: trackName,
+				type: "adjustment",
 				elements: [],
 				hidden: false,
 			};

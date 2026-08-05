@@ -23,6 +23,8 @@ interface UseTimelineZoomProps {
 	initialPlayheadTime?: MediaTime;
 	tracksScrollRef: RefObject<HTMLDivElement | null>;
 	rulerScrollRef: RefObject<HTMLDivElement | null>;
+	/** See ZoomConfig.getMaxScrollLeft — must not read layout. */
+	getMaxScrollLeft: (args: { zoomLevel: number }) => number;
 }
 
 interface UseTimelineZoomReturn {
@@ -40,6 +42,7 @@ export function useTimelineZoom({
 	initialPlayheadTime,
 	tracksScrollRef,
 	rulerScrollRef,
+	getMaxScrollLeft,
 }: UseTimelineZoomProps): UseTimelineZoomReturn {
 	const editor = useEditor();
 	const config: ZoomConfig = {
@@ -47,6 +50,7 @@ export function useTimelineZoom({
 		getContainerEl: () => containerRef.current,
 		getTracksScrollEl: () => tracksScrollRef.current,
 		getRulerScrollEl: () => rulerScrollRef.current,
+		getMaxScrollLeft,
 		getCurrentPlayheadTime: () => editor.playback.getCurrentTime(),
 		seek: (time) => editor.playback.seek({ time }),
 		setTimelineViewState: ({ zoomLevel, scrollLeft, playheadTime }) =>

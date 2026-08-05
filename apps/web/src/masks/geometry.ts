@@ -15,7 +15,7 @@ type SnapGeometryParams = CenterMaskParams & {
 	scale?: number;
 };
 
-export function hasCenterParams(
+function hasCenterParams(
 	params: Partial<CenterMaskParams>,
 ): params is CenterMaskParams {
 	return (
@@ -23,7 +23,7 @@ export function hasCenterParams(
 	);
 }
 
-export function isRectangleMaskParams(
+function isRectangleMaskParams(
 	params: SnapGeometryParams,
 ): params is RectangleMaskParams {
 	return (
@@ -35,7 +35,7 @@ export function isRectangleMaskParams(
 	);
 }
 
-export function getMaskLocalCenter({
+function getMaskLocalCenter({
 	params,
 	bounds,
 }: {

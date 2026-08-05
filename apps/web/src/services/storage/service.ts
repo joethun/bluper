@@ -16,7 +16,6 @@ import type {
 	SerializedProject,
 	SerializedScene,
 } from "./types";
-import type { SavedSoundsData, SavedSound, SoundEffect } from "@/sounds/types";
 import {
 	migrations,
 	runStorageMigrations,
@@ -53,7 +52,6 @@ function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
 
 class StorageService {
 	private projectsAdapter: IndexedDBAdapter<SerializedProject>;
-	private savedSoundsAdapter: IndexedDBAdapter<SavedSoundsData>;
 	private config: StorageConfig;
 	private migrationsPromise: Promise<void> | null = null;
 
@@ -61,19 +59,12 @@ class StorageService {
 		this.config = {
 			projectsDb: "video-editor-projects",
 			mediaDb: "video-editor-media",
-			savedSoundsDb: "video-editor-saved-sounds",
 			version: 1,
 		};
 
 		this.projectsAdapter = new IndexedDBAdapter<SerializedProject>({
 			dbName: this.config.projectsDb,
 			storeName: "projects",
-			version: this.config.version,
-		});
-
-		this.savedSoundsAdapter = new IndexedDBAdapter<SavedSoundsData>({
-			dbName: this.config.savedSoundsDb,
-			storeName: "saved-sounds",
 			version: this.config.version,
 		});
 	}
@@ -466,98 +457,6 @@ class StorageService {
 		};
 	}
 
-	async loadSavedSounds(): Promise<SavedSoundsData> {
-		try {
-			const savedSoundsData = await this.savedSoundsAdapter.get("user-sounds");
-			return (
-				savedSoundsData || {
-					sounds: [],
-					lastModified: new Date().toISOString(),
-				}
-			);
-		} catch (error) {
-			console.error("Failed to load saved sounds:", error);
-			return { sounds: [], lastModified: new Date().toISOString() };
-		}
-	}
-
-	async saveSoundEffect({
-		soundEffect,
-	}: {
-		soundEffect: SoundEffect;
-	}): Promise<void> {
-		try {
-			const currentData = await this.loadSavedSounds();
-
-			if (currentData.sounds.some((sound) => sound.id === soundEffect.id)) {
-				return; // Already saved
-			}
-
-			const savedSound: SavedSound = {
-				id: soundEffect.id,
-				name: soundEffect.name,
-				username: soundEffect.username,
-				previewUrl: soundEffect.previewUrl,
-				downloadUrl: soundEffect.downloadUrl,
-				duration: soundEffect.duration,
-				tags: soundEffect.tags,
-				license: soundEffect.license,
-				savedAt: new Date().toISOString(),
-			};
-
-			const updatedData: SavedSoundsData = {
-				sounds: [...currentData.sounds, savedSound],
-				lastModified: new Date().toISOString(),
-			};
-
-			await this.savedSoundsAdapter.set({
-				key: "user-sounds",
-				value: updatedData,
-			});
-		} catch (error) {
-			console.error("Failed to save sound effect:", error);
-			throw error;
-		}
-	}
-
-	async removeSavedSound({ soundId }: { soundId: number }): Promise<void> {
-		try {
-			const currentData = await this.loadSavedSounds();
-
-			const updatedData: SavedSoundsData = {
-				sounds: currentData.sounds.filter((sound) => sound.id !== soundId),
-				lastModified: new Date().toISOString(),
-			};
-
-			await this.savedSoundsAdapter.set({
-				key: "user-sounds",
-				value: updatedData,
-			});
-		} catch (error) {
-			console.error("Failed to remove saved sound:", error);
-			throw error;
-		}
-	}
-
-	async isSoundSaved({ soundId }: { soundId: number }): Promise<boolean> {
-		try {
-			const currentData = await this.loadSavedSounds();
-			return currentData.sounds.some((sound) => sound.id === soundId);
-		} catch (error) {
-			console.error("Failed to check if sound is saved:", error);
-			return false;
-		}
-	}
-
-	async clearSavedSounds(): Promise<void> {
-		try {
-			await this.savedSoundsAdapter.remove("user-sounds");
-		} catch (error) {
-			console.error("Failed to clear saved sounds:", error);
-			throw error;
-		}
-	}
-
 	isOPFSSupported(): boolean {
 		return OPFSAdapter.isSupported();
 	}
@@ -572,4 +471,3 @@ class StorageService {
 }
 
 export const storageService = new StorageService();
-export { StorageService };

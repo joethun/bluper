@@ -1,6 +1,7 @@
-import type { TimelineTrack, TimelineElement } from "@/timeline";
+import type { SceneTracks, TimelineTrack, TimelineElement } from "@/timeline";
 import type { ComputeDropTargetParams, DropTarget } from "@/timeline";
 import { resolveTrackPlacement } from "@/timeline/placement";
+import { findTransitionCuts } from "@/transitions";
 import { TIMELINE_TRACK_GAP_PX } from "./layout";
 import { getTrackHeight } from "./track-layout";
 import {
@@ -100,6 +101,72 @@ function fallbackNewTrackDropTarget({
 	};
 }
 
+/** How near the pointer has to be to a join for a transition to land on it. */
+const TRANSITION_SNAP_PX = 28;
+
+/**
+ * Resolves the join a transition drag is over. A transition belongs to a cut
+ * rather than to a clip, so the drag snaps to the nearest boundary between two
+ * adjacent clips instead of hit-testing whichever clip is under the pointer —
+ * dropping in the middle of a clip means nothing.
+ */
+export function computeTransitionDropTarget({
+	mouseX,
+	mouseY,
+	tracks,
+	pixelsPerSecond,
+	zoomLevel,
+}: {
+	mouseX: number;
+	mouseY: number;
+	tracks: SceneTracks;
+	pixelsPerSecond: number;
+	zoomLevel: number;
+}): DropTarget | null {
+	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
+	const trackAtMouse = getTrackAtY({ mouseY, tracks: orderedTracks });
+	if (!trackAtMouse) {
+		return null;
+	}
+
+	const track = orderedTracks[trackAtMouse.trackIndex];
+	if (!track) {
+		return null;
+	}
+
+	const pixelsPerTick = (pixelsPerSecond * zoomLevel) / TICKS_PER_SECOND;
+	if (pixelsPerTick <= 0) {
+		return null;
+	}
+
+	const cuts = findTransitionCuts({ track });
+	let nearest: { cut: (typeof cuts)[number]; distancePx: number } | null = null;
+	for (const cut of cuts) {
+		const distancePx = Math.abs(cut.time * pixelsPerTick - mouseX);
+		if (!nearest || distancePx < nearest.distancePx) {
+			nearest = { cut, distancePx };
+		}
+	}
+
+	if (!nearest || nearest.distancePx > TRANSITION_SNAP_PX) {
+		return null;
+	}
+
+	return {
+		trackIndex: trackAtMouse.trackIndex,
+		isNewTrack: false,
+		insertPosition: null,
+		// The transition is stored on the later clip, so that is what the drop
+		// names; the seam rides along for the indicator.
+		xPosition: nearest.cut.time,
+		seamTime: nearest.cut.time,
+		targetElement: {
+			trackId: nearest.cut.trackId,
+			elementId: nearest.cut.incomingId,
+		},
+	};
+}
+
 export function computeDropTarget({
 	elementType,
 	mouseX,
@@ -116,7 +183,6 @@ export function computeDropTarget({
 	targetElementTypes,
 }: ComputeDropTargetParams): DropTarget {
 	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
-	const mainTrackIndex = tracks.overlay.length;
 	const xPosition =
 		startTimeOverride !== undefined
 			? startTimeOverride

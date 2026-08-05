@@ -35,9 +35,7 @@ type Shape = {
 type DefaultRadial = { type: "default-radial"; at: Position };
 
 type RadialOrientation =
-	| Shape
-	| (ExtentKeyword & { at?: Position })
-	| DefaultRadial;
+	Shape | (ExtentKeyword & { at?: Position }) | DefaultRadial;
 
 export type GradientOrientation = LinearOrientation | Array<RadialOrientation>;
 
@@ -241,8 +239,7 @@ const matchAngle = (): AngularOrientation | undefined =>
 	match({ type: "angular", pattern: tokens.radianValue, captureIndex: 1 });
 
 const matchListRadialOrientations = ():
-	| Array<RadialOrientation>
-	| undefined => {
+	Array<RadialOrientation> | undefined => {
 	const radialOrientation = matchRadialOrientation();
 	if (!radialOrientation) {
 		return undefined;
@@ -645,8 +642,4 @@ export const parseGradient = ({
 		input = input.slice(0, -1);
 	}
 	return getAst();
-};
-
-export const GradientParser = {
-	parse: parseGradient,
 };

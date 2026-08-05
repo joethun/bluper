@@ -1,6 +1,6 @@
 import type { STICKER_CATEGORIES } from "@/stickers/categories";
 
-export type StickerCategory = keyof typeof STICKER_CATEGORIES;
+type StickerCategory = keyof typeof STICKER_CATEGORIES;
 
 export interface StickerItem {
 	id: string;
@@ -16,7 +16,7 @@ export interface StickerSearchResult {
 	hasMore: boolean;
 }
 
-export interface StickerBrowseSection {
+interface StickerBrowseSection {
 	id: string;
 	title?: string;
 	items: StickerItem[];
@@ -33,11 +33,11 @@ export interface StickerBrowseResult {
 	sections: StickerBrowseSection[];
 }
 
-export interface StickerProviderSearchOptions {
+interface StickerProviderSearchOptions {
 	limit?: number;
 }
 
-export interface StickerProviderBrowseOptions {
+interface StickerProviderBrowseOptions {
 	page?: number;
 	limit?: number;
 }

@@ -25,27 +25,27 @@ import {
 	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
 import { hasMediaId } from "@/timeline";
+import { findFreezeTarget } from "@/freeze";
 import { cn } from "@/utils/ui";
 import { useTimelineStore } from "@/timeline/timeline-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-	Bookmark02Icon,
-	Delete02Icon,
-	SnowIcon,
-	ScissorIcon,
+	PanelLeftOpenIcon,
+	PanelRightOpenIcon,
+	BookmarkIcon,
+	ChartSplineIcon,
+	CopyIcon,
+	LayersIcon,
+	LinkIcon,
 	MagnetIcon,
-	SearchAddIcon,
-	SearchMinusIcon,
-	Copy01Icon,
-	AlignLeftIcon,
-	AlignRightIcon,
-	Link02Icon,
-	Layers01Icon,
-	Chart03Icon,
-	Unlink02Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { OcRippleIcon } from "@/components/icons";
+	ScissorsIcon,
+	SnowflakeIcon,
+	Trash2Icon,
+	UnfoldHorizontalIcon,
+	Unlink2Icon,
+	ZoomInIcon,
+	ZoomOutIcon,
+} from "lucide-react";
 import { GraphEditorPopover } from "./graph-editor/popover";
 import { PopoverTrigger } from "@/components/ui/popover";
 import { useGraphEditorController } from "./graph-editor/use-controller";
@@ -127,6 +127,14 @@ function ToolbarLeftSection() {
 		isSourceAudioSeparated({
 			element: selectedElement.element,
 		});
+	const canFreezeAtPlayhead = useEditor(
+		(currentEditor) =>
+			findFreezeTarget({
+				tracks: currentEditor.scenes.getActiveScene().tracks,
+				time: currentEditor.playback.getCurrentTime(),
+				selectedElements,
+			}) !== null,
+	);
 
 	const handleAction = ({
 		action,
@@ -143,19 +151,19 @@ function ToolbarLeftSection() {
 		<div className="flex items-center gap-1">
 			<TooltipProvider delayDuration={500}>
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={ScissorIcon} />}
+					icon={<ScissorsIcon />}
 					tooltip="Split element"
 					onClick={({ event }) => handleAction({ action: "split", event })}
 				/>
 
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={AlignLeftIcon} />}
+					icon={<PanelLeftOpenIcon />}
 					tooltip="Split left"
 					onClick={({ event }) => handleAction({ action: "split-left", event })}
 				/>
 
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={AlignRightIcon} />}
+					icon={<PanelRightOpenIcon />}
 					tooltip="Split right"
 					onClick={({ event }) =>
 						handleAction({ action: "split-right", event })
@@ -163,11 +171,7 @@ function ToolbarLeftSection() {
 				/>
 
 				<ToolbarButton
-					icon={
-						<HugeiconsIcon
-							icon={isSelectedSourceAudioSeparated ? Unlink02Icon : Link02Icon}
-						/>
-					}
+					icon={isSelectedSourceAudioSeparated ? <LinkIcon /> : <Unlink2Icon />}
 					tooltip={sourceAudioLabel}
 					disabled={!canToggleSelectedSourceAudio}
 					onClick={({ event }) =>
@@ -176,7 +180,7 @@ function ToolbarLeftSection() {
 				/>
 
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={Copy01Icon} />}
+					icon={<CopyIcon />}
 					tooltip="Duplicate element"
 					onClick={({ event }) =>
 						handleAction({ action: "duplicate-selected", event })
@@ -184,14 +188,16 @@ function ToolbarLeftSection() {
 				/>
 
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={SnowIcon} />}
-					tooltip="Freeze frame (coming soon)"
-					disabled={true}
-					onClick={({ event: _event }) => {}}
+					icon={<SnowflakeIcon />}
+					tooltip="Freeze frame"
+					disabled={!canFreezeAtPlayhead}
+					onClick={({ event }) =>
+						handleAction({ action: "freeze-frame", event })
+					}
 				/>
 
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={Delete02Icon} />}
+					icon={<Trash2Icon />}
 					tooltip="Delete element"
 					onClick={({ event }) =>
 						handleAction({ action: "delete-selected", event })
@@ -202,7 +208,7 @@ function ToolbarLeftSection() {
 
 				<Tooltip>
 					<ToolbarButton
-						icon={<HugeiconsIcon icon={Bookmark02Icon} />}
+						icon={<BookmarkIcon />}
 						isActive={isCurrentlyBookmarked}
 						tooltip={isCurrentlyBookmarked ? "Remove bookmark" : "Add bookmark"}
 						onClick={({ event }) =>
@@ -228,7 +234,7 @@ function ToolbarLeftSection() {
 					onCancelPreview={graphEditor.onCancelPreview}
 				>
 					<ToolbarButton
-						icon={<HugeiconsIcon icon={Chart03Icon} />}
+						icon={<ChartSplineIcon />}
 						tooltip={graphEditor.tooltip}
 						disabled={!graphEditor.canOpen}
 						buttonWrapper={(button) =>
@@ -256,7 +262,7 @@ function SceneSelector() {
 				<SplitButtonSeparator />
 				<ScenesView>
 					<SplitButtonRight onClick={() => {}}>
-						<HugeiconsIcon icon={Layers01Icon} className="size-4" />
+						<LayersIcon className="size-4" />
 					</SplitButtonRight>
 				</ScenesView>
 			</SplitButton>
@@ -284,14 +290,14 @@ function ToolbarRightSection({
 		<div className="flex items-center gap-1">
 			<TooltipProvider delayDuration={500}>
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={MagnetIcon} />}
+					icon={<MagnetIcon />}
 					isActive={snappingEnabled}
 					tooltip="Auto snapping"
 					onClick={() => toggleSnapping()}
 				/>
 
 				<ToolbarButton
-					icon={<OcRippleIcon size={24} className="scale-110" />}
+					icon={<UnfoldHorizontalIcon />}
 					isActive={rippleEditingEnabled}
 					tooltip="Ripple editing"
 					onClick={() => toggleRippleEditing()}
@@ -306,7 +312,7 @@ function ToolbarRightSection({
 					size="icon"
 					onClick={() => onZoom({ direction: "out" })}
 				>
-					<HugeiconsIcon icon={SearchMinusIcon} />
+					<ZoomOutIcon />
 				</Button>
 				<Slider
 					className="w-28"
@@ -323,7 +329,7 @@ function ToolbarRightSection({
 					size="icon"
 					onClick={() => onZoom({ direction: "in" })}
 				>
-					<HugeiconsIcon icon={SearchAddIcon} />
+					<ZoomInIcon />
 				</Button>
 			</div>
 		</div>

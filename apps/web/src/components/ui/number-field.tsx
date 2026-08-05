@@ -5,8 +5,7 @@ import { clamp } from "@/utils/math";
 import { useRef, useState, useLayoutEffect, type ComponentProps } from "react";
 import { useFocusLock } from "@/hooks/use-focus-lock";
 import { Button } from "@/components/ui/button";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowTurnBackwardIcon } from "@hugeicons/core-free-icons";
+import { UndoIcon } from "lucide-react";
 
 const SUFFIX_GAP_PX = 6;
 
@@ -97,8 +96,10 @@ function scrubAcrossRanges({
 	return clampScrubValue({ value: currentValue, min, max });
 }
 
-interface NumberFieldProps
-	extends Omit<ComponentProps<"input">, "size" | "type"> {
+interface NumberFieldProps extends Omit<
+	ComponentProps<"input">,
+	"size" | "type"
+> {
 	icon?: React.ReactNode;
 	suffix?: string;
 	suffixClassName?: string;
@@ -131,9 +132,8 @@ function NumberField({
 	onMouseDown,
 	onReset,
 	isDefault = false,
-	ref,
 	...props
-}: NumberFieldProps & { ref?: React.Ref<HTMLInputElement> }) {
+}: NumberFieldProps) {
 	const iconRef = useRef<HTMLButtonElement>(null);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const ghostRef = useRef<HTMLSpanElement>(null);
@@ -141,7 +141,9 @@ function NumberField({
 	const cumulativeDeltaRef = useRef(0);
 	const [isInputFocused, setIsInputFocused] = useState(false);
 	const [suffixLeft, setSuffixLeft] = useState(0);
-	const ghostValue = Array.isArray(value) ? value.join(", ") : String(value ?? "");
+	const ghostValue = Array.isArray(value)
+		? value.join(", ")
+		: String(value ?? "");
 
 	useLayoutEffect(() => {
 		if (!suffix) {
@@ -152,9 +154,12 @@ function NumberField({
 		if (ghostRef.current.textContent !== ghostValue) {
 			ghostRef.current.textContent = ghostValue;
 		}
-		const paddingLeft =
-			parseFloat(getComputedStyle(inputRef.current).paddingLeft) || 0;
-		setSuffixLeft(paddingLeft + ghostRef.current.offsetWidth);
+		// The suffix is absolutely positioned, so `left` is measured from the
+		// wrapper's padding edge — the same origin as offsetLeft. Using the
+		// input's offsetLeft accounts for the wrapper padding and the optional
+		// scrub icon; reading the input's own padding does not, because the
+		// padding lives on the wrapper.
+		setSuffixLeft(inputRef.current.offsetLeft + ghostRef.current.offsetWidth);
 	}, [ghostValue, suffix]);
 
 	const { containerRef: wrapperRef } = useFocusLock<HTMLDivElement>({
@@ -258,14 +263,14 @@ function NumberField({
 						type="button"
 						aria-label="Drag to adjust value"
 						disabled={disabled}
-						className="text-muted-foreground [&_svg]:size-3.5! shrink-0 select-none pl-2.5 text-sm leading-none cursor-ew-resize"
+						className="text-muted-foreground [&_svg]:size-3.5 shrink-0 select-none pl-2.5 text-sm leading-none cursor-ew-resize"
 						onMouseDown={(event) => event.preventDefault()}
 						onPointerDown={handleIconPointerDown}
 					>
 						{icon}
 					</button>
 				) : (
-					<span className="text-muted-foreground [&_svg]:size-3.5! shrink-0 select-none pl-2.5 text-sm leading-none">
+					<span className="text-muted-foreground [&_svg]:size-3.5 shrink-0 select-none pl-2.5 text-sm leading-none">
 						{icon}
 					</span>
 				))}
@@ -307,7 +312,7 @@ function NumberField({
 						aria-label="Reset to default"
 						onClick={onReset}
 					>
-						<HugeiconsIcon icon={ArrowTurnBackwardIcon} className="size-3.5!" />
+						<UndoIcon />
 					</Button>
 				</div>
 			)}

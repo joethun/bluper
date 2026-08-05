@@ -9,6 +9,16 @@ const nextConfig: NextConfig = {
 	reactStrictMode: true,
 	productionBrowserSourceMaps: true,
 	output: "standalone",
+	// Projects moved to the root, so keep existing /projects links working.
+	async redirects() {
+		return [
+			{
+				source: "/projects",
+				destination: "/",
+				permanent: true,
+			},
+		];
+	},
 	images: {
 		remotePatterns: [
 			{

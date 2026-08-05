@@ -9,8 +9,8 @@ import {
 	computeBoxMaskParamUpdate,
 	getDefaultBaseMaskParams,
 	getStrokeOffset,
-	rotatePoint,
 } from "../box-like";
+import { rotatePointAround } from "@/utils/geometry";
 
 function getDefaultCinematicBarsMaskParams({
 	elementSize,
@@ -21,8 +21,7 @@ function getDefaultCinematicBarsMaskParams({
 		absWidth > 0 && absHeight > 0
 			? Math.sqrt(absWidth ** 2 + absHeight ** 2)
 			: 0;
-	const fullSpanWidth =
-		absWidth > 0 ? diagonal / absWidth : Math.SQRT2;
+	const fullSpanWidth = absWidth > 0 ? diagonal / absWidth : Math.SQRT2;
 
 	return {
 		...getDefaultBaseMaskParams(),
@@ -54,7 +53,7 @@ function buildBandPath({
 		{ x: centerX + halfWidth, y: centerY + halfHeight },
 		{ x: centerX - halfWidth, y: centerY + halfHeight },
 	].map((point) =>
-		rotatePoint({
+		rotatePointAround({
 			...point,
 			centerX,
 			centerY,

@@ -1,4 +1,4 @@
-export type PersistedKeybindingConfig = Record<string, string | undefined>;
+type PersistedKeybindingConfig = Record<string, string | undefined>;
 
 export interface PersistedKeybindingsState {
 	keybindings: PersistedKeybindingConfig;

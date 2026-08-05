@@ -5,29 +5,39 @@ import type {
 	ImageElement,
 	MaskableElement,
 	RetimableElement,
+	FadeableElement,
 	StickerElement,
 	TextElement,
 	VisualElement,
 	VideoElement,
 	AudioElement,
+	AdjustableElement,
 	TimelineElement,
 } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { AdjustTab, BlendingTab } from "@/adjustments/components/adjust-tab";
 import {
-	TextFontIcon,
-	ArrowExpandIcon,
-	RainDropIcon,
-	MusicNote03Icon,
-	MagicWand05Icon,
-	DashboardSpeed02Icon,
-} from "@hugeicons/core-free-icons";
+	CircleFadingArrowUpIcon,
+	DropletIcon,
+	ExpandIcon,
+	GaugeIcon,
+	MusicIcon,
+	ShapesIcon,
+	SlidersHorizontalIcon,
+	TypeIcon,
+	WandSparklesIcon,
+} from "lucide-react";
 import { ElementParamsTab } from "./components/element-params-tab";
-import { ClipEffectsTab, StandaloneEffectTab } from "@/effects/components/effects-tab";
+import { AudioTab } from "./components/audio-tab";
+import {
+	ClipEffectsTab,
+	StandaloneEffectTab,
+} from "@/effects/components/effects-tab";
 import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
-import { OcShapesIcon } from "@/components/icons";
+import { FadeTab } from "@/fades/components/fade-tab";
+import { isFrozenElement } from "@/freeze";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -37,8 +47,6 @@ const TRANSFORM_PARAM_KEYS = [
 	"transform.rotate",
 ] as const;
 
-const BLENDING_PARAM_KEYS = ["opacity", "blendMode"] as const;
-const AUDIO_PARAM_KEYS = ["volume", "muted"] as const;
 const TEXT_PARAM_KEYS = [
 	"content",
 	"fontFamily",
@@ -59,11 +67,11 @@ const TEXT_PARAM_KEYS = [
 	"background.offsetY",
 ] as const;
 
-export type TabContentProps = {
+type TabContentProps = {
 	trackId: string;
 };
 
-export type PropertiesTabDef = {
+type PropertiesTabDef = {
 	id: string;
 	label: string;
 	icon: ReactNode;
@@ -83,15 +91,29 @@ function buildTransformTab({
 	return {
 		id: "transform",
 		label: "Transform",
-		icon: <HugeiconsIcon icon={ArrowExpandIcon} size={16} />,
+		icon: <ExpandIcon />,
 		content: ({ trackId }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
 				paramKeys={TRANSFORM_PARAM_KEYS}
 				sectionKey="transform"
+				title="Transform"
 			/>
 		),
+	};
+}
+
+function buildAdjustTab({
+	element,
+}: {
+	element: AdjustableElement;
+}): PropertiesTabDef {
+	return {
+		id: "adjust",
+		label: "Adjust",
+		icon: <SlidersHorizontalIcon />,
+		content: ({ trackId }) => <AdjustTab element={element} trackId={trackId} />,
 	};
 }
 
@@ -103,16 +125,37 @@ function buildBlendingTab({
 	return {
 		id: "blending",
 		label: "Blending",
-		icon: <HugeiconsIcon icon={RainDropIcon} size={16} />,
+		icon: <DropletIcon />,
 		content: ({ trackId }) => (
-			<ElementParamsTab
-				element={element}
-				trackId={trackId}
-				paramKeys={BLENDING_PARAM_KEYS}
-				sectionKey="blending"
-			/>
+			<BlendingTab element={element} trackId={trackId} />
 		),
 	};
+}
+
+/**
+ * The order the tab rail shows them in, for every element type. Kept in one list
+ * rather than per-type arrays so no type can drift into its own ordering.
+ */
+const TAB_ORDER = [
+	"text",
+	"graphic",
+	"transform",
+	"blending",
+	"audio",
+	"speed",
+	"fade",
+	"adjust",
+	"effects",
+	"masks",
+];
+
+function orderTabs({ tabs }: { tabs: PropertiesTabDef[] }): PropertiesTabDef[] {
+	const rank = ({ id }: PropertiesTabDef) => {
+		const index = TAB_ORDER.indexOf(id);
+		// An unlisted tab sorts to the end rather than jumping to the front.
+		return index === -1 ? TAB_ORDER.length : index;
+	};
+	return [...tabs].sort((a, b) => rank(a) - rank(b));
 }
 
 function buildAudioTab({
@@ -123,15 +166,8 @@ function buildAudioTab({
 	return {
 		id: "audio",
 		label: "Audio",
-		icon: <HugeiconsIcon icon={MusicNote03Icon} size={16} />,
-		content: ({ trackId }) => (
-			<ElementParamsTab
-				element={element}
-				trackId={trackId}
-				paramKeys={AUDIO_PARAM_KEYS}
-				sectionKey="audio"
-			/>
-		),
+		icon: <MusicIcon />,
+		content: ({ trackId }) => <AudioTab element={element} trackId={trackId} />,
 	};
 }
 
@@ -143,7 +179,7 @@ function buildSpeedTab({
 	return {
 		id: "speed",
 		label: "Speed",
-		icon: <HugeiconsIcon icon={DashboardSpeed02Icon} size={16} />,
+		icon: <GaugeIcon />,
 		content: ({ trackId }) => <SpeedTab element={element} trackId={trackId} />,
 	};
 }
@@ -156,8 +192,21 @@ function buildMasksTab({
 	return {
 		id: "masks",
 		label: "Masks",
-		icon: <OcShapesIcon size={16} />,
+		icon: <ShapesIcon />,
 		content: ({ trackId }) => <MasksTab element={element} trackId={trackId} />,
+	};
+}
+
+function buildFadeTab({
+	element,
+}: {
+	element: FadeableElement;
+}): PropertiesTabDef {
+	return {
+		id: "fade",
+		label: "Fade",
+		icon: <CircleFadingArrowUpIcon />,
+		content: ({ trackId }) => <FadeTab element={element} trackId={trackId} />,
 	};
 }
 
@@ -169,7 +218,7 @@ function buildClipEffectsTab({
 	return {
 		id: "effects",
 		label: "Effects",
-		icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} />,
+		icon: <WandSparklesIcon />,
 		content: ({ trackId }) => (
 			<ClipEffectsTab element={element} trackId={trackId} />
 		),
@@ -180,13 +229,14 @@ function buildTextTab({ element }: { element: TextElement }): PropertiesTabDef {
 	return {
 		id: "text",
 		label: "Text",
-		icon: <HugeiconsIcon icon={TextFontIcon} size={16} />,
+		icon: <TypeIcon />,
 		content: ({ trackId }) => (
 			<ElementParamsTab
 				element={element}
 				trackId={trackId}
 				paramKeys={TEXT_PARAM_KEYS}
 				sectionKey="text"
+				title="Text"
 			/>
 		),
 	};
@@ -200,8 +250,10 @@ function buildGraphicTab({
 	return {
 		id: "graphic",
 		label: "Graphic",
-		icon: <OcShapesIcon size={16} />,
-		content: ({ trackId }) => <GraphicTab element={element} trackId={trackId} />,
+		icon: <ShapesIcon />,
+		content: ({ trackId }) => (
+			<GraphicTab element={element} trackId={trackId} />
+		),
 	};
 }
 
@@ -213,7 +265,7 @@ function buildStandaloneEffectTab({
 	return {
 		id: "effects",
 		label: "Effects",
-		icon: <HugeiconsIcon icon={MagicWand05Icon} size={16} />,
+		icon: <WandSparklesIcon />,
 		content: ({ trackId }) => (
 			<StandaloneEffectTab element={element} trackId={trackId} />
 		),
@@ -231,6 +283,7 @@ function getTextConfig({
 			buildTextTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
+			buildClipEffectsTab({ element }),
 		],
 	};
 }
@@ -242,16 +295,20 @@ function getVideoConfig({
 	element: VideoElement;
 	mediaAsset: MediaAsset | undefined;
 }): ElementPropertiesConfig {
-	const showAudioTab = mediaAsset?.hasAudio !== false;
+	// A held still has one frame and no sound: there is nothing for the speed
+	// control to stretch and nothing for the volume control to fade.
+	const isFrozen = isFrozenElement({ element });
+	const showAudioTab = mediaAsset?.hasAudio !== false && !isFrozen;
 	return {
 		defaultTab: "transform",
 		tabs: [
 			buildTransformTab({ element }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
-			buildSpeedTab({ element }),
-			buildBlendingTab({ element }),
+			...(isFrozen ? [] : [buildSpeedTab({ element })]),
+			buildAdjustTab({ element }),
 			buildMasksTab({ element }),
 			buildClipEffectsTab({ element }),
+			buildFadeTab({ element }),
 		],
 	};
 }
@@ -265,9 +322,10 @@ function getImageConfig({
 		defaultTab: "transform",
 		tabs: [
 			buildTransformTab({ element }),
-			buildBlendingTab({ element }),
+			buildAdjustTab({ element }),
 			buildMasksTab({ element }),
 			buildClipEffectsTab({ element }),
+			buildFadeTab({ element }),
 		],
 	};
 }
@@ -333,6 +391,17 @@ export function getPropertiesConfig({
 	element: TimelineElement;
 	mediaAssets: MediaAsset[];
 }): ElementPropertiesConfig {
+	const config = getConfigForElement({ element, mediaAssets });
+	return { ...config, tabs: orderTabs({ tabs: config.tabs }) };
+}
+
+function getConfigForElement({
+	element,
+	mediaAssets,
+}: {
+	element: TimelineElement;
+	mediaAssets: MediaAsset[];
+}): ElementPropertiesConfig {
 	switch (element.type) {
 		case "text":
 			return getTextConfig({ element });
@@ -350,5 +419,9 @@ export function getPropertiesConfig({
 			return getAudioConfig({ element });
 		case "effect":
 			return getEffectConfig({ element });
+		case "adjustment":
+			// Adjustment elements have no editable properties yet, so there is no tab
+			// to show. The panel renders nothing when the tab list is empty.
+			return { defaultTab: "adjustments", tabs: [] };
 	}
 }

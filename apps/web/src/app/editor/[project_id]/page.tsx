@@ -12,17 +12,14 @@ import { Timeline } from "@/timeline/components";
 import { PreviewPanel } from "@/preview/components";
 import { EditorHeader } from "@/components/editor/editor-header";
 import { EditorProvider } from "@/components/providers/editor-provider";
-import { Onboarding } from "@/components/editor/onboarding";
 import { MigrationDialog } from "@/project/components/migration-dialog";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
 import { MobileGate } from "@/components/editor/mobile-gate";
 import { useMemo, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
-import { Cancel01Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ChangelogNotification } from "@/changelog/components/changelog-notification";
 import {
 	createPreviewOverlayControl,
 	isPreviewOverlayVisible,
@@ -35,6 +32,7 @@ import {
 	getBookmarkPreviewOverlaySource,
 } from "@/timeline/bookmarks/index";
 
+
 export default function Editor() {
 	const params = useParams();
 	const projectId = params.project_id as string;
@@ -45,13 +43,11 @@ export default function Editor() {
 				<div className="bg-background flex h-screen w-screen flex-col overflow-hidden">
 					<DegradedRendererBanner />
 					<EditorHeader />
-					<div className="min-h-0 min-w-0 flex-1">
-						<EditorLayout />
-					</div>
-					<Onboarding />
-					<MigrationDialog />
-					<ChangelogNotification />
+				<div className="min-h-0 min-w-0 flex-1">
+					<EditorLayout />
 				</div>
+				<MigrationDialog />
+			</div>
 			</EditorProvider>
 		</MobileGate>
 	);
@@ -64,7 +60,7 @@ function DegradedRendererBanner() {
 
 	return (
 		<div className="bg-accent border-b h-9 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-			<span>For the best experience, open OpenCut in Chrome.</span>
+			<span>For the best experience, open Bluper in Chrome.</span>
 			<Button
 				variant="text"
 				size="icon"
@@ -72,7 +68,7 @@ function DegradedRendererBanner() {
 				onClick={() => setDismissed(true)}
 				aria-label="Dismiss"
 			>
-				<HugeiconsIcon icon={Cancel01Icon} />
+				<XIcon />
 			</Button>
 		</div>
 	);

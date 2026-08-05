@@ -1,9 +1,4 @@
-import {
-	GridTableIcon,
-	LayoutThreeColumnIcon,
-	LayoutThreeRowIcon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { Columns3Icon, Rows3Icon, TableIcon } from "lucide-react";
 import { NumberField } from "@/components/ui/number-field";
 import {
 	GRID_MIN,
@@ -82,7 +77,7 @@ function GridGuideOptions() {
 	return (
 		<div className="flex gap-2">
 			<NumberField
-				icon={<HugeiconsIcon icon={LayoutThreeRowIcon} />}
+				icon={<Rows3Icon />}
 				value={rows}
 				min={GRID_MIN}
 				max={GRID_MAX}
@@ -97,7 +92,7 @@ function GridGuideOptions() {
 				className="flex-1"
 			/>
 			<NumberField
-				icon={<HugeiconsIcon icon={LayoutThreeColumnIcon} />}
+				icon={<Columns3Icon />}
 				value={cols}
 				min={GRID_MIN}
 				max={GRID_MAX}
@@ -119,7 +114,7 @@ export const gridGuide = {
 	id: "grid",
 	label: "Grid",
 	renderPreview: () => <GridGuidePreview />,
-	renderTriggerIcon: () => <HugeiconsIcon icon={GridTableIcon} />,
+	renderTriggerIcon: () => <TableIcon />,
 	renderOverlay: () => <GridGuideOverlay />,
 	renderOptions: () => <GridGuideOptions />,
 } as const satisfies GuideDefinition;

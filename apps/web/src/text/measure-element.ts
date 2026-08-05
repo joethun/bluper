@@ -16,7 +16,7 @@ import {
 	type TextLayoutParams,
 } from "./primitives";
 
-export interface ResolvedTextBackground extends TextBackground {
+interface ResolvedTextBackground extends TextBackground {
 	paddingX: number;
 	paddingY: number;
 	offsetX: number;
@@ -73,7 +73,7 @@ export function measureTextElement({
 	localTime: number;
 	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 }): MeasuredTextElement {
-	const text = buildTextLayoutParamsFromElement({ element });
+	const text = buildTextLayoutParamsFromElement({ element, localTime });
 	const measuredLayout = measureTextLayout({
 		text,
 		canvasHeight,
@@ -129,10 +129,18 @@ export function measureTextElement({
 	};
 }
 
+/**
+ * `localTime` is required so the keyframable layout params below can't quietly
+ * fall back to their base value. fontSize, letterSpacing and lineHeight all
+ * carry a keyframe toggle in the properties panel; reading them straight off
+ * `element.params` used to record keyframes the renderer then ignored.
+ */
 export function buildTextLayoutParamsFromElement({
 	element,
+	localTime,
 }: {
 	element: TextElement;
+	localTime: number;
 }): TextLayoutParams {
 	return {
 		content: readStringParam({
@@ -140,10 +148,15 @@ export function buildTextLayoutParamsFromElement({
 			key: "content",
 			fallback: "Default text",
 		}),
-		fontSize: readNumberParam({
-			params: element.params,
-			key: "fontSize",
-			fallback: 15,
+		fontSize: resolveNumberAtTime({
+			baseValue: readNumberParam({
+				params: element.params,
+				key: "fontSize",
+				fallback: 15,
+			}),
+			animations: element.animations,
+			propertyPath: "fontSize",
+			localTime,
 		}),
 		fontFamily: readStringParam({
 			params: element.params,
@@ -166,15 +179,25 @@ export function buildTextLayoutParamsFromElement({
 			value: element.params.textDecoration,
 			fallback: "none",
 		}),
-		letterSpacing: readNumberParam({
-			params: element.params,
-			key: "letterSpacing",
-			fallback: DEFAULTS.text.letterSpacing,
+		letterSpacing: resolveNumberAtTime({
+			baseValue: readNumberParam({
+				params: element.params,
+				key: "letterSpacing",
+				fallback: DEFAULTS.text.letterSpacing,
+			}),
+			animations: element.animations,
+			propertyPath: "letterSpacing",
+			localTime,
 		}),
-		lineHeight: readNumberParam({
-			params: element.params,
-			key: "lineHeight",
-			fallback: DEFAULTS.text.lineHeight,
+		lineHeight: resolveNumberAtTime({
+			baseValue: readNumberParam({
+				params: element.params,
+				key: "lineHeight",
+				fallback: DEFAULTS.text.lineHeight,
+			}),
+			animations: element.animations,
+			propertyPath: "lineHeight",
+			localTime,
 		}),
 	};
 }

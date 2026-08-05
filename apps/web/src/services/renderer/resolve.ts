@@ -1,13 +1,31 @@
-import { mediaTimeToSeconds, roundMediaTime } from "@/wasm";
+import {
+	clampMediaTime,
+	mediaTime,
+	mediaTimeToSeconds,
+	type MediaTime,
+	roundMediaTime,
+	ZERO_MEDIA_TIME,
+} from "@/wasm";
 import { getElementLocalTime } from "@/animation";
 import { resolveEffectParamsAtTime } from "@/animation/effect-param-channel";
 import {
 	buildGaussianBlurPasses,
 	intensityToSigma,
 } from "@/effects/definitions/blur";
-import { effectsRegistry, resolveEffectPasses } from "@/effects";
+import {
+	effectsRegistry,
+	resolveCanvasEffects,
+	resolveEffectPasses,
+} from "@/effects";
 import type { Effect, EffectPass } from "@/effects/types";
-import { getSourceTimeAtClipTime } from "@/retime";
+import { resolveClipAdjustmentsAtTime } from "@/adjustments/clip";
+import {
+	logTransitionFrameMiss,
+	logTransitionSide,
+} from "@/diagnostics/transition-debug";
+import { resolveFadeOpacity } from "@/fades";
+import { resolveSampledSourceTime } from "@/freeze";
+import { getSourceSpanAtClipTime } from "@/retime";
 import {
 	DEFAULT_GRAPHIC_SOURCE_SIZE,
 	resolveGraphicElementParamsAtTime,
@@ -18,7 +36,17 @@ import {
 	measureTextElement,
 } from "@/text/measure-element";
 import { resolveColorAtTime, resolveOpacityAtTime } from "@/animation/values";
+import type { Transform } from "@/rendering";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
+import {
+	getActiveTransitionBinding,
+	getTransitionRenderExtension,
+	isShapeFullyOpaque,
+	isShapeFullyTransparent,
+	resolveTransitionFrame,
+} from "@/transitions";
+import type { TransitionSideState } from "@/transitions/types";
+import type { WrappedCanvas } from "mediabunny";
 import { videoCache } from "@/services/video-cache/service";
 import type { CanvasRenderer } from "./canvas-renderer";
 import type { AnyBaseNode } from "./nodes/base-node";
@@ -109,23 +137,60 @@ function resolveEffectPassGroups({
 	width: number;
 	height: number;
 }): EffectPass[][] {
-	return (effects ?? [])
-		.filter((effect) => effect.enabled)
-		.map((effect) => {
-			const resolvedParams = resolveEffectParamsAtTime({
-				effectId: effect.id,
-				params: effect.params,
-				animations,
-				localTime,
-			});
-			const definition = effectsRegistry.get(effect.type);
-			return resolveEffectPasses({
-				definition,
-				effectParams: resolvedParams,
-				width,
-				height,
-			});
-		});
+	return (
+		(effects ?? [])
+			.filter((effect) => effect.enabled && effectsRegistry.has(effect.type))
+			.map((effect) => {
+				const resolvedParams = resolveEffectParamsAtTime({
+					effectId: effect.id,
+					params: effect.params,
+					animations,
+					localTime,
+				});
+				const definition = effectsRegistry.get(effect.type);
+				return resolveEffectPasses({
+					definition,
+					effectParams: resolvedParams,
+					width,
+					height,
+				});
+			})
+			// An effect that paints on the canvas contributes no shader passes, and the
+			// compositor treats an empty pass group as an error rather than a no-op.
+			.filter((passes) => passes.length > 0)
+	);
+}
+
+/**
+ * How far outside its own span a clip still has to be drawn. A transition
+ * overlaps the two clips it joins without moving either one, so the incoming
+ * clip has to start drawing before its `startTime` and the outgoing clip has to
+ * keep drawing past its end.
+ */
+function getRenderExtension({ params }: { params: VisualNodeParams }): {
+	head: number;
+	tail: number;
+} {
+	if (!params.transitions || params.transitions.length === 0) {
+		return { head: 0, tail: 0 };
+	}
+	return getTransitionRenderExtension({ bindings: params.transitions });
+}
+
+/**
+ * Whether the clip contributes pixels at `time`, counting the overlap its
+ * transitions borrow on either side of the cut.
+ */
+function isWithinRenderWindow({
+	params,
+	time,
+}: {
+	params: VisualNodeParams;
+	time: number;
+}): boolean {
+	const { head, tail } = getRenderExtension({ params });
+	const clipTime = time - params.timeOffset;
+	return clipTime >= -head && clipTime < params.duration + tail;
 }
 
 function resolveVisualState({
@@ -139,8 +204,62 @@ function resolveVisualState({
 	sourceWidth: number;
 	sourceHeight: number;
 }): ResolvedVisualNodeState | null {
+	if (!isWithinRenderWindow({ params, time: context.time })) {
+		return null;
+	}
+
 	const clipTime = context.time - params.timeOffset;
-	if (clipTime < 0 || clipTime >= params.duration) {
+	// Fades multiply in alongside a transition rather than replacing it: a clip can
+	// legitimately fade up from the background at the top of the timeline and still
+	// cross-fade into its neighbour at the other end.
+	const fadeOpacity = resolveFadeOpacity({
+		fade: params.fade,
+		clipTime,
+		duration: params.duration,
+	});
+	const binding = getActiveTransitionBinding({
+		bindings: params.transitions ?? [],
+		time: context.time,
+	});
+	// Outside its own span the clip exists only to fill one side of a transition.
+	// With no transition running there is nothing to draw.
+	if (!binding && (clipTime < 0 || clipTime >= params.duration)) {
+		return null;
+	}
+
+	const transitionFrame = binding
+		? resolveTransitionFrame({
+				binding,
+				time: context.time,
+				width: context.renderer.width,
+				height: context.renderer.height,
+			})
+		: null;
+	const transitionSide =
+		binding && transitionFrame
+			? binding.role === "incoming"
+				? transitionFrame.incoming
+				: transitionFrame.outgoing
+			: null;
+
+	// The wash rides on the incoming clip's node, so that node has to survive even
+	// when its own pixels are hidden — "flash white" hides the incoming clip for
+	// the first half of the window, which is exactly when the flash ramps up.
+	const overlay =
+		binding?.role === "incoming" && transitionFrame?.overlay
+			? transitionFrame.overlay
+			: null;
+	const isSideHidden =
+		fadeOpacity <= 0 ||
+		Boolean(
+			transitionSide &&
+			(transitionSide.opacity <= 0 ||
+				(transitionSide.shape &&
+					isShapeFullyTransparent({ shape: transitionSide.shape }))),
+		);
+	// Nothing of this side is visible and it carries no wash: skip the layer
+	// rather than upload a fully transparent mask for it.
+	if (isSideHidden && !overlay) {
 		return null;
 	}
 
@@ -149,16 +268,25 @@ function resolveVisualState({
 		elementStartTime: params.timeOffset,
 		elementDuration: params.duration,
 	});
-	const transform = resolveTransformAtTime({
+	const baseTransform = resolveTransformAtTime({
 		baseTransform: params.transform,
 		animations: params.animations,
 		localTime,
 	});
-	const opacity = resolveOpacityAtTime({
+	const baseOpacity = resolveOpacityAtTime({
 		baseOpacity: params.opacity,
 		animations: params.animations,
 		localTime,
 	});
+	const transform = transitionSide
+		? applyTransitionSideToTransform({
+				transform: baseTransform,
+				side: transitionSide,
+			})
+		: baseTransform;
+	const opacity =
+		(transitionSide ? baseOpacity * transitionSide.opacity : baseOpacity) *
+		fadeOpacity;
 	const containScale = Math.min(
 		context.renderer.width / sourceWidth,
 		context.renderer.height / sourceHeight,
@@ -169,19 +297,151 @@ function resolveVisualState({
 	const effectHeight = Math.round(
 		Math.abs(sourceHeight * containScale * transform.scaleY),
 	);
+	const effectPasses = resolveEffectPassGroups({
+		effects: params.effects,
+		animations: params.animations,
+		localTime,
+		width: effectWidth,
+		height: effectHeight,
+	});
+	// The transition's own defocus runs after the clip's effects so it reads as a
+	// camera move on the finished look rather than something baked underneath it.
+	const transitionBlur =
+		transitionSide && transitionSide.blurSigma > 0
+			? buildGaussianBlurPasses({
+					sigmaX: transitionSide.blurSigma,
+					sigmaY: transitionSide.blurSigma,
+				})
+			: [];
+
+	if (transitionSide) {
+		logTransitionSide({
+			clipTime,
+			role: binding?.role ?? "?",
+			opacity: isSideHidden ? 0 : opacity,
+			hasShape: Boolean(transitionSide.shape),
+		});
+	}
 
 	return {
 		localTime,
 		transform,
-		opacity,
-		effectPasses: resolveEffectPassGroups({
+		// A hidden side that only survived to carry the wash contributes no pixels.
+		opacity: isSideHidden ? 0 : opacity,
+		effectPasses:
+			transitionBlur.length > 0
+				? [...effectPasses, transitionBlur]
+				: effectPasses,
+		canvasEffects: resolveCanvasEffects({
 			effects: params.effects,
 			animations: params.animations,
 			localTime,
-			width: effectWidth,
-			height: effectHeight,
+			duration: params.duration,
+		}),
+		transitionShape:
+			!isSideHidden &&
+			transitionSide?.shape &&
+			!isShapeFullyOpaque({ shape: transitionSide.shape })
+				? transitionSide.shape
+				: null,
+		// Both sides of a cut resolve the same frame, so the wash is emitted once —
+		// from the incoming clip, which composites above the outgoing one.
+		transitionOverlay: overlay,
+		adjustments: resolveClipAdjustmentsAtTime({
+			params: params.adjustParams,
+			animations: params.animations,
+			localTime,
 		}),
 	};
+}
+
+/**
+ * Folds one side of a transition into the transform the clip already resolved:
+ * offsets and rotation add, scale multiplies, so a transition composes with a
+ * clip that is already moved, scaled or keyframed rather than overriding it.
+ */
+function applyTransitionSideToTransform({
+	transform,
+	side,
+}: {
+	transform: Transform;
+	side: TransitionSideState;
+}): Transform {
+	return {
+		...transform,
+		position: {
+			x: transform.position.x + side.offsetX,
+			y: transform.position.y + side.offsetY,
+		},
+		scaleX: transform.scaleX * side.scale,
+		scaleY: transform.scaleY * side.scale,
+		rotate: transform.rotate + side.rotateDegrees,
+	};
+}
+
+/**
+ * The last source time this clip can sample. `trimStart` and `trimEnd` are exactly
+ * the material the trim is hiding on either side, so the clip's own trim says how
+ * far its handles reach — `trimStart + span + trimEnd` is the source's full length.
+ * A tick short of the end keeps the request inside the final frame.
+ */
+function getLastSampleableSourceTime({
+	params,
+}: {
+	params: VideoNode["params"];
+}): MediaTime {
+	// The span is snapped before it becomes a tick count: a speed curve is an
+	// integral, so it almost never lands on a whole tick the way a uniform rate
+	// does, and `mediaTime` only accepts whole ticks.
+	const sourceSpan = roundMediaTime({
+		time: getSourceSpanAtClipTime({
+			clipTime: params.duration,
+			clipDuration: params.duration,
+			retime: params.retime,
+		}),
+	});
+	return mediaTime({
+		ticks: Math.max(0, params.trimStart + sourceSpan + params.trimEnd - 1),
+	});
+}
+
+/**
+ * The frame to show at `clipTime`. A transition pushes each side outside its own
+ * span — the incoming clip is asked to draw before its in-point, the outgoing one
+ * after its out-point — and both answer by reaching into the material their trim
+ * is hiding. That is the whole point: each clip keeps playing its own footage
+ * through the blend, so the picture never stops and the two sides show different
+ * moments rather than a pair of stills.
+ *
+ * The reach stops at the ends of the file. A clip already using every frame it has
+ * holds its edge frame there, because there is genuinely nothing further to show.
+ */
+function sampleVideoFrame({
+	node,
+	clipTime,
+}: {
+	node: VideoNode;
+	clipTime: number;
+}): Promise<WrappedCanvas | null> {
+	const sourceTime = resolveSampledSourceTime({
+		freeze: node.params.freeze,
+		trimStart: node.params.trimStart,
+		clipTime,
+		clipDuration: node.params.duration,
+		retime: node.params.retime,
+	});
+	const clampedSourceTime = clampMediaTime({
+		time: sourceTime,
+		min: ZERO_MEDIA_TIME,
+		max: getLastSampleableSourceTime({ params: node.params }),
+	});
+
+	return videoCache.getFrameAt({
+		mediaId: node.params.mediaId,
+		sinkKey: node.params.sinkKey,
+		file: node.params.file,
+		time: mediaTimeToSeconds({ time: clampedSourceTime }),
+	});
 }
 
 async function resolveVideoNode({
@@ -191,23 +451,18 @@ async function resolveVideoNode({
 	node: VideoNode;
 	context: ResolveContext;
 }): Promise<ResolvedVisualSourceNodeState | null> {
-	const clipTime = context.time - node.params.timeOffset;
-	if (clipTime < 0 || clipTime >= node.params.duration) {
+	if (!isWithinRenderWindow({ params: node.params, time: context.time })) {
 		return null;
 	}
 
-	const sourceTimeTicks =
-		node.params.trimStart +
-		getSourceTimeAtClipTime({
-			clipTime,
-			retime: node.params.retime,
-		});
-	const frame = await videoCache.getFrameAt({
-		mediaId: node.params.mediaId,
-		file: node.params.file,
-		time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
-	});
+	const clipTime = context.time - node.params.timeOffset;
+	const frame = await sampleVideoFrame({ node, clipTime });
 	if (!frame) {
+		logTransitionFrameMiss({
+			mediaId: node.params.mediaId,
+			sinkKey: node.params.sinkKey,
+			clipTime,
+		});
 		return null;
 	}
 
@@ -344,6 +599,11 @@ function resolveTextNode({
 			animations: node.params.animations,
 			localTime,
 		}),
+		adjustments: resolveClipAdjustmentsAtTime({
+			params: node.params.adjustParams,
+			animations: node.params.animations,
+			localTime,
+		}),
 		textColor: resolveColorAtTime({
 			baseColor:
 				typeof node.params.params.color === "string"
@@ -365,6 +625,12 @@ function resolveTextNode({
 			localTime,
 			width: context.renderer.width,
 			height: context.renderer.height,
+		}),
+		canvasEffects: resolveCanvasEffects({
+			effects: node.params.effects,
+			animations: node.params.animations,
+			localTime,
+			duration: node.params.duration,
 		}),
 		measuredText: measureTextElement({
 			element: node.params,
@@ -417,16 +683,17 @@ async function resolveBackdropSource({
 	clipTime: number;
 }): Promise<BackdropSource | null> {
 	if (node.params.mediaType === "video") {
-		const sourceTimeTicks =
-			node.params.trimStart +
-			getSourceTimeAtClipTime({
-				clipTime,
-				retime: node.params.retime,
-			});
+		const sourceTime = resolveSampledSourceTime({
+			freeze: node.params.freeze,
+			trimStart: node.params.trimStart,
+			clipTime,
+			clipDuration: node.params.duration,
+			retime: node.params.retime,
+		});
 		const frame = await videoCache.getFrameAt({
 			mediaId: node.params.mediaId,
 			file: node.params.file,
-			time: mediaTimeToSeconds({ time: roundMediaTime({ time: sourceTimeTicks }) }),
+			time: mediaTimeToSeconds({ time: sourceTime }),
 		});
 		if (!frame) {
 			return null;

@@ -7,11 +7,7 @@ import type { BookmarkDragState } from "../hooks/use-bookmark-drag";
 import { DEFAULT_TIMELINE_BOOKMARK_COLOR } from "@/timeline/components/theme";
 import { TIMELINE_BOOKMARK_ROW_HEIGHT_PX } from "@/timeline/components/layout";
 import { DEFAULT_FPS } from "@/fps/defaults";
-import {
-	ArrowTurnBackwardIcon,
-	Delete02Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { Trash2Icon, UndoIcon } from "lucide-react";
 import type { Bookmark } from "@/timeline";
 import {
 	Popover,
@@ -387,8 +383,7 @@ function BookmarkPopoverContent({
 									})
 								}
 							>
-								<HugeiconsIcon
-									icon={ArrowTurnBackwardIcon}
+								<UndoIcon
 									className="!size-3.5"
 								/>
 							</Button>
@@ -434,7 +429,7 @@ function BookmarkPopoverContent({
 				}}
 				aria-label="delete bookmark"
 			>
-				<HugeiconsIcon icon={Delete02Icon} className="!size-3.5" />
+				<Trash2Icon className="!size-3.5" />
 				Delete
 			</Button>
 		</>

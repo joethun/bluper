@@ -1,17 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { Transform } from "@/rendering";
 import type { SceneTracks, VideoElement } from "@/timeline";
 import { applyElementUpdate } from "@/timeline/update-pipeline";
 import { mediaTime, ZERO_MEDIA_TIME } from "@/wasm";
-
-function buildTransform(): Transform {
-	return {
-		scaleX: 1,
-		scaleY: 1,
-		position: { x: 0, y: 0 },
-		rotate: 0,
-	};
-}
 
 function buildVideoElement(overrides: Partial<VideoElement> = {}): VideoElement {
 	return {
@@ -66,7 +56,7 @@ describe("applyElementUpdate", () => {
 			},
 		});
 
-		expect(updatedElement.duration).toBe(7);
+		expect(updatedElement.duration).toBe(mediaTime({ ticks: 7 }));
 		expect(Number.isInteger(updatedElement.duration)).toBe(true);
 	});
 });

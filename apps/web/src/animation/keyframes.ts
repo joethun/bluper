@@ -42,6 +42,7 @@ import {
 	ZERO_MEDIA_TIME,
 } from "@/wasm";
 import { generateUUID } from "@/utils/id";
+import { subdivideCubicBezier } from "@/utils/geometry";
 
 function isNearlySameTime({
 	leftTime,
@@ -74,7 +75,8 @@ function toAnimation({
 }): ElementAnimations | undefined {
 	const nextAnimations = Object.fromEntries(
 		Object.entries(animations).filter(
-			([key, data]) => isAnimationStorageKey({ key }) && hasChannelData({ data }),
+			([key, data]) =>
+				isAnimationStorageKey({ key }) && hasChannelData({ data }),
 		),
 	);
 	if (Object.keys(nextAnimations).length === 0) {
@@ -460,20 +462,6 @@ function upsertScalarChannelKey({
 	});
 }
 
-export function getChannel({
-	animations,
-	propertyPath,
-}: {
-	animations: ElementAnimations | undefined;
-	propertyPath: AnimationPath;
-}): AnimationChannel | undefined {
-	const data = getChannelData({ animations, propertyPath });
-	if (isLeafChannelData(data)) {
-		return data;
-	}
-	return getChannelsFromData({ data })[0];
-}
-
 export function upsertPathKeyframe({
 	animations,
 	propertyPath,
@@ -577,46 +565,7 @@ export function upsertPathKeyframe({
 	});
 }
 
-export function upsertKeyframe({
-	channel,
-	time,
-	value,
-	interpolation,
-	keyframeId,
-}: {
-	channel: AnimationChannel | undefined;
-	time: MediaTime;
-	value: ParamValue;
-	interpolation?: AnimationInterpolation;
-	keyframeId?: string;
-}): AnimationChannel | undefined {
-	if (!channel) {
-		return undefined;
-	}
-
-	if (typeof value === "string" || typeof value === "boolean") {
-		return upsertDiscreteChannelKey({
-			channel: isDiscreteChannel(channel) ? channel : undefined,
-			time,
-			value,
-			keyframeId,
-		});
-	}
-
-	if (typeof value !== "number") {
-		return channel;
-	}
-
-	return upsertScalarChannelKey({
-		channel: isScalarChannel(channel) ? channel : undefined,
-		time,
-		value,
-		interpolation,
-		keyframeId,
-	});
-}
-
-export function removeKeyframe({
+function removeKeyframe({
 	channel,
 	keyframeId,
 }: {
@@ -628,7 +577,9 @@ export function removeKeyframe({
 	}
 
 	if (isScalarChannel(channel)) {
-		const nextKeys = channel.keys.filter((keyframe) => keyframe.id !== keyframeId);
+		const nextKeys = channel.keys.filter(
+			(keyframe) => keyframe.id !== keyframeId,
+		);
 		if (nextKeys.length === 0) {
 			return undefined;
 		}
@@ -641,7 +592,9 @@ export function removeKeyframe({
 		});
 	}
 
-	const nextKeys = channel.keys.filter((keyframe) => keyframe.id !== keyframeId);
+	const nextKeys = channel.keys.filter(
+		(keyframe) => keyframe.id !== keyframeId,
+	);
 	if (nextKeys.length === 0) {
 		return undefined;
 	}
@@ -654,7 +607,7 @@ export function removeKeyframe({
 	});
 }
 
-export function retimeKeyframe({
+function retimeKeyframe({
 	channel,
 	keyframeId,
 	time,
@@ -727,7 +680,7 @@ export function setChannel({
 	});
 }
 
-export function setBindingComponentChannel({
+function setBindingComponentChannel({
 	animations,
 	propertyPath,
 	componentKey,
@@ -773,7 +726,9 @@ export function updateScalarKeyframeCurve({
 		return animations;
 	}
 
-	const keyframeIndex = channel.keys.findIndex((keyframe) => keyframe.id === keyframeId);
+	const keyframeIndex = channel.keys.findIndex(
+		(keyframe) => keyframe.id === keyframeId,
+	);
 	if (keyframeIndex < 0) {
 		return animations;
 	}
@@ -785,11 +740,11 @@ export function updateScalarKeyframeCurve({
 		leftHandle:
 			patch.leftHandle === undefined
 				? currentKey.leftHandle
-				: patch.leftHandle ?? undefined,
+				: (patch.leftHandle ?? undefined),
 		rightHandle:
 			patch.rightHandle === undefined
 				? currentKey.rightHandle
-				: patch.rightHandle ?? undefined,
+				: (patch.rightHandle ?? undefined),
 		segmentToNext: patch.segmentToNext ?? currentKey.segmentToNext,
 		tangentMode: patch.tangentMode ?? currentKey.tangentMode,
 	};
@@ -845,8 +800,8 @@ export function cloneAnimations({
 	}
 
 	const nextAnimations = cloneAnimationsState({ animations });
-	for (const [propertyPath, data] of Object.entries(animations).filter(([key]) =>
-		isAnimationStorageKey({ key }),
+	for (const [propertyPath, data] of Object.entries(animations).filter(
+		([key]) => isAnimationStorageKey({ key }),
 	)) {
 		const channels = getChannelsFromData({ data });
 		const primaryChannel = channels[0];
@@ -871,9 +826,7 @@ export function cloneAnimations({
 			nextAnimations[propertyPath] = Object.fromEntries(
 				Object.entries(data).map(([componentKey, channel]) => [
 					componentKey,
-					channel
-						? cloneChannelWithKeyIds({ channel, keyIdMap })
-						: undefined,
+					channel ? cloneChannelWithKeyIds({ channel, keyIdMap }) : undefined,
 				]),
 			);
 		}
@@ -900,21 +853,6 @@ export function clampAnimationsToDuration({
 		splitTime: duration,
 		shouldIncludeSplitBoundary: true,
 	}).leftAnimations;
-}
-
-function lerpPoint({
-	left,
-	right,
-	progress,
-}: {
-	left: { x: number; y: number };
-	right: { x: number; y: number };
-	progress: number;
-}) {
-	return {
-		x: left.x + (right.x - left.x) * progress,
-		y: left.y + (right.y - left.y) * progress,
-	};
 }
 
 function splitDiscreteChannelAtTime({
@@ -1025,7 +963,10 @@ function splitScalarChannelAtTime({
 	const hasBoundaryOnRight = rightKeys.some((key) =>
 		isNearlySameTime({ leftTime: key.time, rightTime: 0 }),
 	);
-	if (!shouldIncludeSplitBoundary || (hasBoundaryOnLeft && hasBoundaryOnRight)) {
+	if (
+		!shouldIncludeSplitBoundary ||
+		(hasBoundaryOnLeft && hasBoundaryOnRight)
+	) {
 		return {
 			leftChannel: leftKeys.length
 				? normalizeChannel({
@@ -1046,15 +987,14 @@ function splitScalarChannelAtTime({
 		};
 	}
 
-	for (let keyIndex = 0; keyIndex < normalizedChannel.keys.length - 1; keyIndex++) {
+	for (
+		let keyIndex = 0;
+		keyIndex < normalizedChannel.keys.length - 1;
+		keyIndex++
+	) {
 		const leftKey = normalizedChannel.keys[keyIndex];
 		const rightKey = normalizedChannel.keys[keyIndex + 1];
-		if (
-			!(
-				splitTime > leftKey.time &&
-				splitTime < rightKey.time
-			)
-		) {
+		if (!(splitTime > leftKey.time && splitTime < rightKey.time)) {
 			continue;
 		}
 
@@ -1084,12 +1024,13 @@ function splitScalarChannelAtTime({
 				y: rightKey.value + leftHandle.dv,
 			};
 			const p3 = { x: rightKey.time, y: rightKey.value };
-			const q0 = lerpPoint({ left: p0, right: p1, progress });
-			const q1 = lerpPoint({ left: p1, right: p2, progress });
-			const q2 = lerpPoint({ left: p2, right: p3, progress });
-			const r0 = lerpPoint({ left: q0, right: q1, progress });
-			const r1 = lerpPoint({ left: q1, right: q2, progress });
-			const splitPoint = lerpPoint({ left: r0, right: r1, progress });
+			const {
+				p01: q0,
+				p23: q2,
+				p012: r0,
+				p123: r1,
+				point: splitPoint,
+			} = subdivideCubicBezier({ p0, p1, p2, p3, t: progress });
 			leftKeys = [
 				...normalizedChannel.keys.filter((key) => key.time < splitTime),
 				{
@@ -1247,8 +1188,8 @@ export function splitAnimationsAtTime({
 	const leftAnimations = cloneAnimationsState({ animations: undefined });
 	const rightAnimations = cloneAnimationsState({ animations: undefined });
 
-	for (const [propertyPath, data] of Object.entries(animations).filter(([key]) =>
-		isAnimationStorageKey({ key }),
+	for (const [propertyPath, data] of Object.entries(animations).filter(
+		([key]) => isAnimationStorageKey({ key }),
 	)) {
 		if (!data) {
 			continue;
@@ -1304,7 +1245,10 @@ export function removeElementKeyframe({
 
 	const nextAnimations = cloneAnimationsState({ animations });
 	if (isLeafChannelData(data)) {
-		nextAnimations[propertyPath] = removeKeyframe({ channel: data, keyframeId });
+		nextAnimations[propertyPath] = removeKeyframe({
+			channel: data,
+			keyframeId,
+		});
 	} else if (isCompositeChannelData(data)) {
 		let nextData: ChannelData | undefined = data;
 		for (const [componentKey, channel] of Object.entries(data)) {

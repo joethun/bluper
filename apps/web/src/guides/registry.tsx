@@ -8,9 +8,9 @@ import {
 	spotlightGuide,
 } from "./definitions/platforms";
 
-export type { GuideDefinition, GuideRenderProps } from "@/guides/types";
+export type { GuideDefinition } from "@/guides/types";
 
-export const GUIDE_REGISTRY = [
+const GUIDE_REGISTRY = [
 	gridGuide,
 	tiktokGuide,
 	igReelsGuide,
@@ -25,4 +25,11 @@ export type GuideId = (typeof GUIDE_REGISTRY)[number]["id"];
 
 export function isGuideId(value: string): value is GuideId {
 	return GUIDE_REGISTRY.some((guide) => guide.id === value);
+}
+
+export function getGuideById(guideId: string | null): GuideDefinition | null {
+	if (!guideId) {
+		return null;
+	}
+	return GUIDE_REGISTRY.find((guide) => guide.id === guideId) ?? null;
 }

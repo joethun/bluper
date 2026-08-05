@@ -1,7 +1,9 @@
 import type { ElementAnimations } from "@/animation/types";
+import type { Adjustment } from "@/adjustments/types";
 import type { Effect } from "@/effects/types";
 import type { Mask } from "@/masks/types";
 import type { ParamValues } from "@/params";
+import type { ElementTransition } from "@/transitions/types";
 import type { MediaTime } from "@/wasm";
 
 export type ElementRef = {
@@ -26,7 +28,13 @@ export interface TScene {
 	updatedAt: Date;
 }
 
-export type TrackType = "video" | "text" | "audio" | "graphic" | "effect";
+export type TrackType =
+	| "video"
+	| "text"
+	| "audio"
+	| "graphic"
+	| "effect"
+	| "adjustment";
 
 interface BaseTrack {
 	id: string;
@@ -64,14 +72,26 @@ export interface EffectTrack extends BaseTrack {
 	hidden: boolean;
 }
 
+export interface AdjustmentTrack extends BaseTrack {
+	type: "adjustment";
+	elements: AdjustmentElement[];
+	hidden: boolean;
+}
+
 export type TimelineTrack =
 	| VideoTrack
 	| TextTrack
 	| AudioTrack
 	| GraphicTrack
-	| EffectTrack;
+	| EffectTrack
+	| AdjustmentTrack;
 
-export type OverlayTrack = VideoTrack | TextTrack | GraphicTrack | EffectTrack;
+export type OverlayTrack =
+	| VideoTrack
+	| TextTrack
+	| GraphicTrack
+	| EffectTrack
+	| AdjustmentTrack;
 
 export interface SceneTracks {
 	overlay: OverlayTrack[];
@@ -79,9 +99,59 @@ export interface SceneTracks {
 	audio: AudioTrack[];
 }
 
+export type RetimeCurvePresetId =
+	| "custom"
+	| "montage"
+	| "hero"
+	| "bullet"
+	| "jumpCut"
+	| "flashIn"
+	| "flashOut";
+
+/**
+ * One handle on a speed curve. `position` is a fraction of the clip's visible
+ * source span rather than a time, so the shape survives trimming and resizing:
+ * the same curve stretches across whatever material the clip still shows.
+ */
+export interface RetimeCurvePoint {
+	position: number;
+	rate: number;
+}
+
+export interface RetimeCurve {
+	preset: RetimeCurvePresetId;
+	points: RetimeCurvePoint[];
+}
+
+/**
+ * How fast a clip walks its source. `rate` is the single uniform speed; when
+ * `curve` is set the speed varies across the clip and `rate` is only kept as the
+ * average, for code paths that need one number to describe the whole clip.
+ */
 export interface RetimeConfig {
 	rate: number;
 	maintainPitch?: boolean;
+	curve?: RetimeCurve;
+}
+
+/**
+ * Marks a clip as a held still. `sourceTime` is an absolute source-media time
+ * (already past `trimStart`), so the renderer samples the exact same frame for
+ * every timeline time the clip covers, and trimming/resizing the clip never
+ * moves the held frame.
+ */
+export interface FreezeConfig {
+	sourceTime: MediaTime;
+}
+
+/**
+ * Ramps a clip up from and down to the background over its own head and tail.
+ * Unlike a transition it involves one clip and no neighbour, so it always has
+ * somewhere to play and never borrows footage; it is a plain opacity envelope.
+ */
+export interface FadeConfig {
+	in?: MediaTime;
+	out?: MediaTime;
 }
 
 interface BaseAudioElement extends BaseTimelineElement {
@@ -120,8 +190,11 @@ export interface VideoElement extends BaseTimelineElement {
 	isSourceAudioEnabled?: boolean;
 	hidden?: boolean;
 	retime?: RetimeConfig;
+	freeze?: FreezeConfig;
 	effects?: Effect[];
 	masks?: Mask[];
+	transitionIn?: ElementTransition;
+	fade?: FadeConfig;
 }
 
 export interface ImageElement extends BaseTimelineElement {
@@ -130,6 +203,8 @@ export interface ImageElement extends BaseTimelineElement {
 	hidden?: boolean;
 	effects?: Effect[];
 	masks?: Mask[];
+	transitionIn?: ElementTransition;
+	fade?: FadeConfig;
 }
 
 export interface TextElement extends BaseTimelineElement {
@@ -161,7 +236,16 @@ export interface EffectElement extends BaseTimelineElement {
 	effectType: string;
 }
 
-export type ElementUpdatePatch = { params?: Partial<ParamValues> };
+/**
+ * An adjustment layer. Like CapCut's, it owns no pixels of its own: it carries a
+ * stack of colour/tone adjustments that are applied to every visual layer drawn
+ * beneath it, for exactly the span it covers.
+ */
+export interface AdjustmentElement extends BaseTimelineElement {
+	type: "adjustment";
+	adjustments: Adjustment[];
+	hidden?: boolean;
+}
 
 export type TimelineElement =
 	| AudioElement
@@ -170,7 +254,8 @@ export type TimelineElement =
 	| TextElement
 	| StickerElement
 	| GraphicElement
-	| EffectElement;
+	| EffectElement
+	| AdjustmentElement;
 
 export type ElementType = TimelineElement["type"];
 
@@ -192,6 +277,64 @@ export type RetimableElement = Extract<
 	{ type: (typeof RETIMABLE_ELEMENT_TYPES)[number] }
 >;
 
+export const HIDEABLE_ELEMENT_TYPES = elementTypes(
+	"video",
+	"image",
+	"text",
+	"sticker",
+	"graphic",
+	"adjustment",
+);
+
+export type HideableElement = Extract<
+	TimelineElement,
+	{ type: (typeof HIDEABLE_ELEMENT_TYPES)[number] }
+>;
+
+/**
+ * Transitions live on the *incoming* clip and straddle the cut it shares with
+ * the clip before it, which is why only the media element types carry one —
+ * text, stickers and graphics are composited over the cut rather than butted
+ * against it.
+ */
+export const TRANSITIONABLE_ELEMENT_TYPES = elementTypes("video", "image");
+
+export type TransitionableElement = Extract<
+	TimelineElement,
+	{ type: (typeof TRANSITIONABLE_ELEMENT_TYPES)[number] }
+>;
+
+/**
+ * Fading needs no neighbour, so any clip with pixels of its own can do it — but
+ * only the media types are wired up so far, since the others resolve their
+ * opacity on separate paths.
+ */
+const _FADEABLE_ELEMENT_TYPES = elementTypes("video", "image");
+
+export type FadeableElement = Extract<
+	TimelineElement,
+	{ type: (typeof _FADEABLE_ELEMENT_TYPES)[number] }
+>;
+
+export const FREEZABLE_ELEMENT_TYPES = elementTypes("video");
+
+export type FreezableElement = Extract<
+	TimelineElement,
+	{ type: (typeof FREEZABLE_ELEMENT_TYPES)[number] }
+>;
+
+/**
+ * The types the Adjust panel grades. Only footage and stills: text, stickers and
+ * shapes have their colour chosen outright in their own panel, so a grade laid
+ * over the top would be fighting the author rather than correcting a camera.
+ */
+export const ADJUSTABLE_ELEMENT_TYPES = elementTypes("video", "image");
+
+export type AdjustableElement = Extract<
+	TimelineElement,
+	{ type: (typeof ADJUSTABLE_ELEMENT_TYPES)[number] }
+>;
+
 export const VISUAL_ELEMENT_TYPES = elementTypes(
 	"video",
 	"image",
@@ -206,16 +349,17 @@ export type VisualElement = Extract<
 >;
 
 export type CreateUploadAudioElement = Omit<UploadAudioElement, "id">;
-export type CreateLibraryAudioElement = Omit<LibraryAudioElement, "id">;
-export type CreateAudioElement =
+type CreateLibraryAudioElement = Omit<LibraryAudioElement, "id">;
+type CreateAudioElement =
 	| CreateUploadAudioElement
 	| CreateLibraryAudioElement;
 export type CreateVideoElement = Omit<VideoElement, "id">;
 export type CreateImageElement = Omit<ImageElement, "id">;
-export type CreateTextElement = Omit<TextElement, "id">;
+type CreateTextElement = Omit<TextElement, "id">;
 export type CreateStickerElement = Omit<StickerElement, "id">;
 export type CreateGraphicElement = Omit<GraphicElement, "id">;
 export type CreateEffectElement = Omit<EffectElement, "id">;
+export type CreateAdjustmentElement = Omit<AdjustmentElement, "id">;
 export type CreateTimelineElement =
 	| CreateAudioElement
 	| CreateVideoElement
@@ -223,21 +367,8 @@ export type CreateTimelineElement =
 	| CreateTextElement
 	| CreateStickerElement
 	| CreateGraphicElement
-	| CreateEffectElement;
-
-export interface ElementDragState {
-	isDragging: boolean;
-	elementId: string | null;
-	dragElementIds: string[];
-	dragTimeOffsets: Record<string, MediaTime>;
-	trackId: string | null;
-	startMouseX: number;
-	startMouseY: number;
-	startElementTime: MediaTime;
-	clickOffsetTime: MediaTime;
-	currentTime: MediaTime;
-	currentMouseY: number;
-}
+	| CreateEffectElement
+	| CreateAdjustmentElement;
 
 export type ElementDragView =
 	| { readonly kind: "idle" }
@@ -262,6 +393,12 @@ export interface DropTarget {
 	insertPosition: "above" | "below" | null;
 	xPosition: MediaTime;
 	targetElement: { elementId: string; trackId: string } | null;
+	/**
+	 * The join a transition drag has snapped to. Set only for transition drags,
+	 * which land on a boundary between two clips rather than inside one, so the
+	 * timeline can mark the seam instead of a whole clip.
+	 */
+	seamTime?: MediaTime;
 }
 
 export interface ComputeDropTargetParams {
@@ -278,10 +415,4 @@ export interface ComputeDropTargetParams {
 	startTimeOverride?: MediaTime;
 	excludeElementId?: string;
 	targetElementTypes?: string[];
-}
-
-export interface ClipboardItem {
-	trackId: string;
-	trackType: TrackType;
-	element: CreateTimelineElement;
 }

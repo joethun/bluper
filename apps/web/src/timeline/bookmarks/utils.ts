@@ -12,7 +12,7 @@ function bookmarkTimeEqual({
 	return bookmarkTime === frameTime;
 }
 
-export function findBookmarkIndex({
+function findBookmarkIndex({
 	bookmarks,
 	frameTime,
 }: {

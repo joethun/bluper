@@ -1,5 +1,6 @@
 import type { FontAtlas } from "@/fonts/types";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
+import { isCustomFontFamily, loadCustomFonts } from "@/fonts/custom-fonts";
 
 const GOOGLE_FONTS_CSS = "https://fonts.googleapis.com/css2";
 const FONT_ATLAS_PATH = "/fonts/font-atlas.json";
@@ -83,6 +84,13 @@ export async function loadFonts({
 }: {
 	families: string[];
 }): Promise<void> {
-	const googleFonts = families.filter((family) => !SYSTEM_FONTS.has(family));
+	// Register user-uploaded faces first: a custom family sent to the Google CSS
+	// endpoint 404s and the text silently falls back to the system default.
+	await loadCustomFonts();
+
+	const googleFonts = families.filter(
+		(family) =>
+			!SYSTEM_FONTS.has(family) && !isCustomFontFamily({ family }),
+	);
 	await Promise.all(googleFonts.map((family) => loadFullFont({ family })));
 }

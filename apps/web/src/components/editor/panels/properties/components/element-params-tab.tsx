@@ -2,6 +2,7 @@
 
 import { resolveAnimationPathValueAtTime } from "@/animation";
 import { Section, SectionContent, SectionFields } from "@/components/section";
+import { PanelHeader } from "@/components/editor/panels/panel-header";
 import { useElementPlayhead } from "@/components/editor/panels/properties/hooks/use-element-playhead";
 import { useKeyframedParamProperty } from "@/components/editor/panels/properties/hooks/use-keyframed-param-property";
 import { PropertyParamField } from "@/components/editor/panels/properties/components/property-param-field";
@@ -16,6 +17,37 @@ import type { TimelineElement } from "@/timeline";
 import type { MediaTime } from "@/wasm";
 
 export function ElementParamsTab({
+	element,
+	trackId,
+	paramKeys,
+	sectionKey,
+	title,
+}: {
+	element: TimelineElement;
+	trackId: string;
+	paramKeys?: readonly string[];
+	sectionKey: string;
+	title: string;
+}) {
+	return (
+		<div className="flex h-full flex-col">
+			<PanelHeader title={title} />
+			<ElementParamsSection
+				element={element}
+				trackId={trackId}
+				paramKeys={paramKeys}
+				sectionKey={sectionKey}
+			/>
+		</div>
+	);
+}
+
+/**
+ * The param list without the panel title, so a tab that needs a section of its
+ * own beside the params, like the Audio tab's recovery prompt, can put both
+ * under one header instead of growing a second header.
+ */
+export function ElementParamsSection({
 	element,
 	trackId,
 	paramKeys,
@@ -58,7 +90,12 @@ export function ElementParamsTab({
 	);
 }
 
-function ElementParamField({
+/**
+ * One param row wired to the preview/commit and keyframe plumbing. Exported so
+ * panels that lay their params out in groups of their own — the Adjust tab — get
+ * the same behaviour as the flat list rather than a second copy of it.
+ */
+export function ElementParamField({
 	element,
 	trackId,
 	param,
@@ -103,6 +140,7 @@ function ElementParamField({
 					? undefined
 					: {
 							isActive: animatedParam.isKeyframedAtTime,
+							isAnimated: animatedParam.hasAnimatedKeyframes,
 							isDisabled: !isPlayheadWithinElementRange,
 							onToggle: animatedParam.toggleKeyframe,
 						}

@@ -5,7 +5,10 @@ export { SplitElementsCommand } from "./split-elements";
 export { UpdateElementsCommand } from "./update-elements";
 export { ToggleSourceAudioSeparationCommand } from "./toggle-source-audio-separation";
 export { MoveElementCommand } from "./move-elements";
+export { FreezeFrameCommand } from "./freeze-frame";
 
 export * from "./keyframes";
 export * from "./effects";
 export * from "./masks";
+export * from "./transitions";
+export * from "./adjustments";

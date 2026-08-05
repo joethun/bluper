@@ -12,6 +12,15 @@ export interface ZoomConfig {
 	getContainerEl: () => HTMLDivElement | null;
 	getTracksScrollEl: () => HTMLDivElement | null;
 	getRulerScrollEl: () => HTMLDivElement | null;
+	/**
+	 * Largest valid scrollLeft at the given zoom, derived arithmetically.
+	 *
+	 * Must NOT read layout. `applyZoomLayout` runs in a layout effect, right
+	 * after React has written a new width onto every element in the timeline,
+	 * so touching `scrollWidth`/`clientWidth` there forces a full synchronous
+	 * reflow of the whole tree on every wheel frame.
+	 */
+	getMaxScrollLeft: (args: { zoomLevel: number }) => number;
 	getCurrentPlayheadTime: () => MediaTime;
 	seek: (time: MediaTime) => void;
 	setTimelineViewState: (viewState: {
@@ -178,8 +187,7 @@ export class ZoomController {
 		};
 
 		const clampScrollLeft = (scrollLeft: number) => {
-			const maxScrollLeft =
-				scrollElement.scrollWidth - scrollElement.clientWidth;
+			const maxScrollLeft = this.config.getMaxScrollLeft({ zoomLevel });
 			return Math.max(0, Math.min(maxScrollLeft, scrollLeft));
 		};
 
@@ -207,11 +215,10 @@ export class ZoomController {
 
 		this.previousZoom = zoomLevel;
 
-		this.config.setTimelineViewState({
-			zoomLevel,
-			scrollLeft: scrollElement.scrollLeft,
-			playheadTime,
-		});
+		// Persisting view state notifies the project manager, which fans out to
+		// every `useEditor` selector in the app. Debounce it so a wheel gesture
+		// pays that cost once on settle instead of on every frame.
+		this.saveScrollPosition();
 	}
 
 	saveScrollPosition(): void {

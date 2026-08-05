@@ -11,6 +11,11 @@ export interface GroupResizeMember extends ElementRef {
 	trimEnd: MediaTime;
 	sourceDuration?: MediaTime;
 	retime?: RetimeConfig;
+	/**
+	 * A held still. It shows one frame, so there is no source to run out of and
+	 * no trim to walk — only the neighbours limit how far it can stretch.
+	 */
+	isFrozen?: boolean;
 	leftNeighborBound: MediaTime | null;
 	rightNeighborBound: MediaTime | null;
 }

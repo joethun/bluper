@@ -1,12 +1,11 @@
 import type { EditorCore } from "@/core";
 import type { RootNode } from "@/services/renderer/nodes/root-node";
-import type { ExportOptions, ExportResult } from "@/export";
+import type { ExportOptions, ExportPhase, ExportResult } from "@/export";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
 import { SceneExporter } from "@/services/renderer/scene-exporter";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import { formatTimecode } from "opencut-wasm";
-import { frameRateToFloat } from "@/fps/utils";
 import { downloadBlob } from "@/utils/browser";
 
 type SnapshotResult =
@@ -141,10 +140,18 @@ export class RendererManager {
 	async exportProject({
 		options,
 		onProgress,
+		onPhase,
+		onFrame,
 		onCancel,
 	}: {
 		options: ExportOptions;
 		onProgress?: ({ progress }: { progress: number }) => void;
+		onPhase?: ({ phase }: { phase: ExportPhase }) => void;
+		/**
+		 * Called with a frame the render just wrote. The canvas is reused by the
+		 * next frame, so it has to be read before this returns.
+		 */
+		onFrame?: ({ source }: { source: HTMLCanvasElement }) => void;
 		onCancel?: () => boolean;
 	}): Promise<ExportResult> {
 		const { format, quality, fps, includeAudio } = options;
@@ -168,13 +175,42 @@ export class RendererManager {
 
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {
-				onProgress?.({ progress: 0.05 });
-				audioBuffer = await createTimelineAudioBuffer({
-					tracks,
-					mediaAssets,
-					duration,
-				});
+				// Decoding and mixing audio happens before the first frame is
+				// rendered and exposes no measurable progress (fetch + decodeAudioData
+				// report nothing), so this phase is reported as indeterminate rather
+				// than as a percentage that cannot move.
+				onPhase?.({ phase: "preparing" });
+				onProgress?.({ progress: 0 });
+
+				// Poll the cancel request so aborting during prep takes effect
+				// immediately instead of waiting for decoding to finish.
+				const prepAbortController = new AbortController();
+				const prepCancelInterval = setInterval(() => {
+					if (onCancel?.()) prepAbortController.abort();
+				}, 100);
+
+				try {
+					audioBuffer = await createTimelineAudioBuffer({
+						tracks,
+						mediaAssets,
+						duration,
+						signal: prepAbortController.signal,
+					});
+				} catch (error) {
+					if (prepAbortController.signal.aborted) {
+						return { success: false, cancelled: true };
+					}
+					throw error;
+				} finally {
+					clearInterval(prepCancelInterval);
+				}
+
+				if (onCancel?.() || prepAbortController.signal.aborted) {
+					return { success: false, cancelled: true };
+				}
 			}
+
+			onPhase?.({ phase: "rendering" });
 
 			const scene = buildScene({
 				tracks,
@@ -195,10 +231,11 @@ export class RendererManager {
 			});
 
 			exporter.on("progress", (progress) => {
-				const adjustedProgress = includeAudio
-					? 0.05 + progress * 0.95
-					: progress;
-				onProgress?.({ progress: adjustedProgress });
+				onProgress?.({ progress });
+			});
+
+			exporter.on("frame", (source) => {
+				onFrame?.({ source });
 			});
 
 			let cancelled = false;

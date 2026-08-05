@@ -1,8 +1,10 @@
 import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import {
+	HIDEABLE_ELEMENT_TYPES,
 	MASKABLE_ELEMENT_TYPES,
 	RETIMABLE_ELEMENT_TYPES,
 	VISUAL_ELEMENT_TYPES,
+	type CreateAdjustmentElement,
 	type CreateEffectElement,
 	type CreateGraphicElement,
 	type CreateTimelineElement,
@@ -10,13 +12,13 @@ import {
 	type CreateImageElement,
 	type CreateStickerElement,
 	type CreateUploadAudioElement,
-	type CreateLibraryAudioElement,
 	type TextElement,
 	type SceneTracks,
 	type TimelineElement,
 	type AudioElement,
 	type VideoElement,
 	type ImageElement,
+	type HideableElement,
 	type MaskableElement,
 	type RetimableElement,
 	type VisualElement,
@@ -25,6 +27,10 @@ import {
 import { DEFAULTS } from "@/timeline/defaults";
 import type { MediaType } from "@/media/types";
 import { buildDefaultEffectInstance } from "@/effects";
+import {
+	buildAdjustmentInstance,
+	getAdjustmentDefinition,
+} from "@/adjustments";
 import { buildDefaultGraphicInstance } from "@/graphics";
 import type { ParamValues } from "@/params";
 import {
@@ -60,8 +66,8 @@ export function isRetimableElement(
 
 export function canElementBeHidden(
 	element: TimelineElement,
-): element is VisualElement {
-	return isVisualElement(element);
+): element is HideableElement {
+	return (HIDEABLE_ELEMENT_TYPES as readonly string[]).includes(element.type);
 }
 
 export function hasElementEffects({
@@ -136,6 +142,33 @@ export function buildEffectElement({
 		name: capitalizeFirstLetter({ string: instance.type }),
 		effectType,
 		params: instance.params,
+		duration: duration ?? DEFAULT_NEW_ELEMENT_DURATION,
+		startTime,
+		trimStart: ZERO_MEDIA_TIME,
+		trimEnd: ZERO_MEDIA_TIME,
+	};
+}
+
+export function buildAdjustmentElement({
+	adjustmentType,
+	startTime,
+	duration,
+}: {
+	adjustmentType?: string;
+	startTime: MediaTime;
+	duration?: MediaTime;
+}): CreateAdjustmentElement {
+	const adjustments = adjustmentType
+		? [buildAdjustmentInstance({ adjustmentType })]
+		: [];
+
+	return {
+		type: "adjustment",
+		name: adjustmentType
+			? getAdjustmentDefinition({ adjustmentType }).name
+			: "Adjustment",
+		adjustments,
+		params: buildDefaultElementParams({ type: "adjustment" }),
 		duration: duration ?? DEFAULT_NEW_ELEMENT_DURATION,
 		startTime,
 		trimStart: ZERO_MEDIA_TIME,
@@ -328,37 +361,6 @@ export function buildElementFromMedia({
 		case "image":
 			return buildImageElement({ mediaId, name, duration, startTime });
 	}
-}
-
-export function buildLibraryAudioElement({
-	sourceUrl,
-	name,
-	duration,
-	startTime,
-	buffer,
-}: {
-	sourceUrl: string;
-	name: string;
-	duration: MediaTime;
-	startTime: MediaTime;
-	buffer?: AudioBuffer;
-}): CreateLibraryAudioElement {
-	const element: CreateLibraryAudioElement = {
-		type: "audio",
-		sourceType: "library",
-		sourceUrl,
-		name,
-		duration,
-		startTime,
-		trimStart: ZERO_MEDIA_TIME,
-		trimEnd: ZERO_MEDIA_TIME,
-		sourceDuration: duration,
-		params: buildDefaultElementParams({ type: "audio" }),
-	};
-	if (buffer) {
-		element.buffer = buffer;
-	}
-	return element;
 }
 
 export function getElementsAtTime({

@@ -21,6 +21,67 @@ const BAR_STEP = BAR_WIDTH + BAR_GAP;
 const WAVEFORM_BURN_COLOR = "rgba(255, 110, 20, 0.9)";
 export const WAVEFORM_GAIN_SAMPLE_COUNT = 200;
 
+/**
+ * Inputs that decide whether the canvas needs repainting. Compared field by
+ * field rather than serialised: this runs on every scroll frame for every audio
+ * clip on the timeline, and `gainSamples` alone holds
+ * WAVEFORM_GAIN_SAMPLE_COUNT entries. `gainSamples` and `retime` are memoised
+ * per element upstream, so identity is a sound stand-in for their contents —
+ * and a stale identity can only cause an extra repaint, never a missed one.
+ */
+interface RenderSignature {
+	elementWidth: number;
+	clipLeft: number;
+	clipRight: number;
+	visibleWidth: number;
+	canvasW: number;
+	canvasH: number;
+	barCount: number;
+	dpr: number;
+	clipDurationSec: number;
+	sourceStartSec: number;
+	pixelsPerSecond: number;
+	retime: RetimeConfig | undefined;
+	summarySourceKey: string;
+	summarySampleRate: number;
+	summaryTotalSamples: number;
+	summaryBucketSize: number;
+	gainSamples: number[] | undefined;
+	color: string;
+	burnColor: string;
+}
+
+function isSameRenderSignature({
+	previous,
+	next,
+}: {
+	previous: RenderSignature | null;
+	next: RenderSignature;
+}): boolean {
+	return (
+		previous !== null &&
+		previous.elementWidth === next.elementWidth &&
+		previous.clipLeft === next.clipLeft &&
+		previous.clipRight === next.clipRight &&
+		previous.visibleWidth === next.visibleWidth &&
+		previous.canvasW === next.canvasW &&
+		previous.canvasH === next.canvasH &&
+		previous.barCount === next.barCount &&
+		previous.dpr === next.dpr &&
+		previous.clipDurationSec === next.clipDurationSec &&
+		previous.sourceStartSec === next.sourceStartSec &&
+		previous.pixelsPerSecond === next.pixelsPerSecond &&
+		previous.retime === next.retime &&
+		previous.summarySourceKey === next.summarySourceKey &&
+		previous.summarySampleRate === next.summarySampleRate &&
+		previous.summaryTotalSamples === next.summaryTotalSamples &&
+		previous.summaryBucketSize === next.summaryBucketSize &&
+		previous.gainSamples === next.gainSamples &&
+		previous.color === next.color &&
+		previous.burnColor === next.burnColor
+	);
+}
+
 function sampleGainAtClipTime({
 	samples,
 	clipTimeSec,
@@ -84,7 +145,7 @@ export function AudioWaveform({
 	});
 	const scrollParentRef = useRef<HTMLElement | null>(null);
 	const heightRef = useRef<number>(0);
-	const lastRenderSignatureRef = useRef<string | null>(null);
+	const lastRenderSignatureRef = useRef<RenderSignature | null>(null);
 
 	const clearCanvas = useCallback(() => {
 		const canvas = canvasRef.current;
@@ -154,7 +215,7 @@ export function AudioWaveform({
 		const canvasW = Math.max(1, Math.ceil(visibleWidth * dpr));
 		const canvasH = Math.max(1, Math.round(height * dpr));
 		const barCount = Math.max(1, Math.floor(visibleWidth / BAR_STEP));
-		const renderSignature = JSON.stringify({
+		const renderSignature: RenderSignature = {
 			elementWidth,
 			clipLeft,
 			clipRight,
@@ -166,16 +227,21 @@ export function AudioWaveform({
 			clipDurationSec: clipDurationSecValue,
 			sourceStartSec: sourceStartSecValue,
 			pixelsPerSecond: pixelsPerSecondValue,
-			retime: retimeValue ?? null,
+			retime: retimeValue,
 			summarySourceKey: summary.sourceKey,
 			summarySampleRate: summary.sampleRate,
 			summaryTotalSamples: summary.totalSamples,
 			summaryBucketSize: summary.bucketSize,
-			gainSamples: gainSamplesValue ?? null,
+			gainSamples: gainSamplesValue,
 			color: colorValue,
 			burnColor: burnColorValue,
-		});
-		if (lastRenderSignatureRef.current === renderSignature) {
+		};
+		if (
+			isSameRenderSignature({
+				previous: lastRenderSignatureRef.current,
+				next: renderSignature,
+			})
+		) {
 			return;
 		}
 		lastRenderSignatureRef.current = renderSignature;
@@ -314,6 +380,32 @@ export function AudioWaveform({
 		burnColor,
 	]);
 
+	// Scroll fires far more often than once per frame, and every audio clip on
+	// the timeline listens to the same scroll parent. Calling drawVisible per
+	// event meant one scroll burst did (clips x events) forced layout reads and
+	// canvas repaints; coalescing onto a frame collapses that to one pass per
+	// clip per frame, which is all the display can show anyway.
+	const drawFrameRef = useRef<number | null>(null);
+	const scheduleDraw = useCallback(() => {
+		if (drawFrameRef.current !== null) {
+			return;
+		}
+		drawFrameRef.current = requestAnimationFrame(() => {
+			drawFrameRef.current = null;
+			drawVisible();
+		});
+	}, [drawVisible]);
+
+	useEffect(
+		() => () => {
+			if (drawFrameRef.current !== null) {
+				cancelAnimationFrame(drawFrameRef.current);
+				drawFrameRef.current = null;
+			}
+		},
+		[],
+	);
+
 	useEffect(() => {
 		const container = containerRef.current;
 		if (!container) {
@@ -326,19 +418,16 @@ export function AudioWaveform({
 			return;
 		}
 
-		const handleScroll = () => {
-			drawVisible();
-		};
-		scrollParent.addEventListener("scroll", handleScroll, { passive: true });
-		return () => scrollParent.removeEventListener("scroll", handleScroll);
-	}, [drawVisible]);
+		scrollParent.addEventListener("scroll", scheduleDraw, { passive: true });
+		return () => scrollParent.removeEventListener("scroll", scheduleDraw);
+	}, [scheduleDraw]);
 
 	const onResize = useCallback(
 		(entry: ResizeObserverEntry) => {
 			heightRef.current = entry.contentRect.height;
-			drawVisible();
+			scheduleDraw();
 		},
-		[drawVisible],
+		[scheduleDraw],
 	);
 
 	useResizeObserver({ ref: containerRef, onResize });

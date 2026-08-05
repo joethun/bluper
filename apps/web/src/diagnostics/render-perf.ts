@@ -41,7 +41,7 @@ export function isRenderPerfEnabled(): boolean {
 	return typeof window !== "undefined" && window.__renderPerf === true;
 }
 
-export function recordSpan({
+function recordSpan({
 	name,
 	durationMs,
 }: {

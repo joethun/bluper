@@ -39,10 +39,26 @@ const qualityMap = {
 
 export type SceneExporterEvents = {
 	progress: [progress: number];
+	/**
+	 * A frame that was just written to the file, handed over as the canvas it was
+	 * rendered into so it can be shown while the export runs.
+	 *
+	 * That canvas is the one every frame is rendered into, so a listener has to
+	 * read it before returning: by the next frame it holds different pixels.
+	 */
+	frame: [source: HTMLCanvasElement];
 	complete: [buffer: ArrayBuffer];
 	error: [error: Error];
 	cancelled: [];
 };
+
+/**
+ * How often a rendered frame is offered to watchers. Reading the compositor's
+ * canvas costs a GPU readback, so it happens at a rate a person can see rather
+ * than once per exported frame, which would slow the render down for pixels
+ * nobody could follow.
+ */
+const PREVIEW_FRAME_INTERVAL_MS = 100;
 
 export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	private renderer: CanvasRenderer;
@@ -99,7 +115,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			target: new BufferTarget(),
 		});
 
-		const videoSource = new CanvasSource(this.renderer.getOutputCanvas(), {
+		const outputCanvas = this.renderer.getOutputCanvas();
+		const videoSource = new CanvasSource(outputCanvas, {
 			codec: this.format === "webm" ? "vp9" : "avc",
 			bitrate: qualityMap[this.quality],
 		});
@@ -134,6 +151,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			audioSource.close();
 		}
 
+		let lastPreviewAt = 0;
+
 		for (let i = 0; i < frameCount; i++) {
 			if (this.isCancelled) {
 				await output.cancel();
@@ -144,6 +163,21 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			const timeTicks = i * ticksPerFrame;
 			const timeSeconds = mediaTimeToSeconds({ time: timeTicks });
 			await this.renderer.render({ node: rootNode, time: timeTicks });
+
+			// Offered before the frame is encoded rather than after: a canvas the
+			// GPU has drawn to is only reliably readable until the browser next
+			// composites it, and encoding can wait on the encoder long enough for
+			// that to happen. The last frame always goes out, whatever the interval
+			// says, because it is what stays on screen once the render is over.
+			const now = performance.now();
+			if (
+				now - lastPreviewAt >= PREVIEW_FRAME_INTERVAL_MS ||
+				i === frameCount - 1
+			) {
+				lastPreviewAt = now;
+				this.emit("frame", outputCanvas);
+			}
+
 			await videoSource.add(timeSeconds, 1 / fpsFloat);
 
 			this.emit("progress", i / frameCount);

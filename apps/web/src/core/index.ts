@@ -12,7 +12,8 @@ import { ClipboardManager } from "./managers/clipboard-manager";
 import { DiagnosticsManager } from "./managers/diagnostics-manager";
 import { registerDefaultEffects } from "@/effects";
 import { registerDefaultMasks } from "@/masks";
-import { registerTranscriptionDiagnostics } from "@/transcription/diagnostics";
+import { registerDefaultTransitions } from "@/transitions";
+import { registerDefaultAdjustments } from "@/adjustments";
 
 export class EditorCore {
 	private static instance: EditorCore | null = null;
@@ -32,6 +33,8 @@ export class EditorCore {
 	private constructor() {
 		registerDefaultEffects();
 		registerDefaultMasks();
+		registerDefaultTransitions();
+		registerDefaultAdjustments();
 		this.command = new CommandManager(this);
 		this.timeline = new TimelineManager(this);
 		this.playback = new PlaybackManager(this);
@@ -44,7 +47,6 @@ export class EditorCore {
 		this.selection = new SelectionManager(this);
 		this.clipboard = new ClipboardManager(this);
 		this.diagnostics = new DiagnosticsManager(this);
-		registerTranscriptionDiagnostics({ diagnostics: this.diagnostics });
 		this.playback.bindTimelineScope();
 		this.command.registerReactor(() => {
 			const activeScene = this.scenes.getActiveSceneOrNull();

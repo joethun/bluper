@@ -15,7 +15,7 @@ import type {
 import { isKey } from "@/actions/keybinding";
 import { runMigrations, CURRENT_VERSION } from "./keybindings/migrations";
 
-export interface KeybindingConflict {
+interface KeybindingConflict {
 	key: ShortcutKey;
 	existingAction: TActionWithOptionalArgs;
 	newAction: TActionWithOptionalArgs;
@@ -180,7 +180,7 @@ export const useKeybindingsStore = create<KeybindingsState>()(
 			getKeybindingString: (ev) => generateKeybindingString(ev),
 		}),
 		{
-			name: "opencut-keybindings",
+			name: "bluper-keybindings",
 			version: CURRENT_VERSION,
 			partialize: (state): PersistedState => ({
 				keybindings: Object.fromEntries(state.keybindings),

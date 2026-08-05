@@ -5,7 +5,7 @@ export interface GridConfig {
 	cols: number;
 }
 
-export interface GuideRenderProps {
+interface GuideRenderProps {
 	width: number;
 	height: number;
 }

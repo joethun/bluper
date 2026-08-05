@@ -2,7 +2,6 @@ import type { Mask, MaskDefaultContext, MaskType } from "@/masks/types";
 import { masksRegistry } from "./registry";
 import { generateUUID } from "@/utils/id";
 
-export { masksRegistry } from "./registry";
 export { registerDefaultMasks } from "./builtin/definitions";
 
 type MaskWithoutId = Mask extends infer TMask

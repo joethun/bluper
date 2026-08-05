@@ -2,11 +2,9 @@
 
 import * as React from "react";
 import { Select as SelectPrimitive } from "radix-ui";
-import { Check } from "lucide-react";
-import { ArrowUpIcon, ArrowDownIcon } from "@hugeicons/core-free-icons";
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/utils/ui";
-import { HugeiconsIcon } from "@hugeicons/react";
 import { useOverlayOpenChange } from "./use-overlay-open-change";
 
 function Select({
@@ -26,8 +24,6 @@ function Select({
 		/>
 	);
 }
-
-const SelectGroup = SelectPrimitive.Group;
 
 const SelectValue = SelectPrimitive.Value;
 
@@ -88,7 +84,7 @@ const SelectTrigger = React.forwardRef<
 			{children}
 		</div>
 		<SelectPrimitive.Icon asChild>
-			<HugeiconsIcon icon={ArrowDownIcon} className="size-4" />
+			<ChevronDownIcon className="size-3.5" />
 		</SelectPrimitive.Icon>
 	</SelectPrimitive.Trigger>
 ));
@@ -106,7 +102,7 @@ const SelectScrollUpButton = React.forwardRef<
 		)}
 		{...props}
 	>
-		<HugeiconsIcon icon={ArrowUpIcon} className="size-4" />
+		<ChevronUpIcon className="size-4" />
 	</SelectPrimitive.ScrollUpButton>
 ));
 SelectScrollUpButton.displayName = SelectPrimitive.ScrollUpButton.displayName;
@@ -123,7 +119,7 @@ const SelectScrollDownButton = React.forwardRef<
 		)}
 		{...props}
 	>
-		<HugeiconsIcon icon={ArrowDownIcon} className="size-4" />
+		<ChevronDownIcon className="size-4" />
 	</SelectPrimitive.ScrollDownButton>
 ));
 SelectScrollDownButton.displayName =
@@ -162,21 +158,6 @@ const SelectContent = React.forwardRef<
 ));
 SelectContent.displayName = SelectPrimitive.Content.displayName;
 
-const SelectLabel = React.forwardRef<
-	React.ElementRef<typeof SelectPrimitive.Label>,
-	React.ComponentPropsWithoutRef<typeof SelectPrimitive.Label>
->(({ className, ...props }, ref) => (
-	<SelectPrimitive.Label
-		ref={ref}
-		className={cn(
-			"px-2 pb-1 pt-0.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground",
-			className,
-		)}
-		{...props}
-	/>
-));
-SelectLabel.displayName = SelectPrimitive.Label.displayName;
-
 const SelectItem = React.forwardRef<
 	React.ElementRef<typeof SelectPrimitive.Item>,
 	React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item> & {
@@ -185,15 +166,17 @@ const SelectItem = React.forwardRef<
 >(({ className, children, variant = "default", ...props }, ref) => (
 	<SelectPrimitive.Item
 		ref={ref}
-		className={cn(selectItemVariants({ variant }), "pl-6 pr-2", className)}
+		className={cn(selectItemVariants({ variant }), "pl-2 pr-6", className)}
 		{...props}
 	>
-		<span className="absolute left-1.5 flex size-3.5 items-center justify-center">
+		<SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+		{/* The gutter is reserved by `pr-6` whether or not this item is the selected
+		    one, so labels stay put instead of shifting when the selection moves. */}
+		<span className="absolute right-1.5 flex size-3.5 items-center justify-center">
 			<SelectPrimitive.ItemIndicator>
-				<Check className="size-3.5" />
+				<CheckIcon className="size-3.5" />
 			</SelectPrimitive.ItemIndicator>
 		</span>
-		<SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
 	</SelectPrimitive.Item>
 ));
 SelectItem.displayName = SelectPrimitive.Item.displayName;
@@ -212,13 +195,9 @@ SelectSeparator.displayName = SelectPrimitive.Separator.displayName;
 
 export {
 	Select,
-	SelectGroup,
 	SelectValue,
 	SelectTrigger,
 	SelectContent,
-	SelectLabel,
 	SelectItem,
 	SelectSeparator,
-	SelectScrollUpButton,
-	SelectScrollDownButton,
 };

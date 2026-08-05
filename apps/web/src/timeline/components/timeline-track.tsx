@@ -5,7 +5,11 @@ import { TimelineElement } from "./timeline-element";
 import type { TimelineTrack } from "@/timeline";
 import type { TimelineElement as TimelineElementType } from "@/timeline";
 import { TIMELINE_LAYERS } from "./layers";
+import { timelineTimeToPixels } from "@/timeline";
 import type { ElementDragView } from "@/timeline";
+import { findTransitions } from "@/transitions";
+import { TransitionMarker } from "@/transitions/components/transition-marker";
+import type { MediaTime } from "@/wasm";
 
 interface TimelineTrackContentProps {
 	track: TimelineTrack;
@@ -31,6 +35,8 @@ interface TimelineTrackContentProps {
 	onTrackMouseUp?: (event: React.MouseEvent) => void;
 	shouldIgnoreClick?: () => boolean;
 	targetElementId?: string | null;
+	/** Set while a transition is being dragged over a join on this track. */
+	seamTime?: MediaTime | null;
 }
 
 export function TimelineTrackContent({
@@ -44,6 +50,7 @@ export function TimelineTrackContent({
 	onTrackMouseUp,
 	shouldIgnoreClick,
 	targetElementId = null,
+	seamTime = null,
 }: TimelineTrackContentProps) {
 	const { isElementSelected } = useElementSelection();
 
@@ -77,6 +84,24 @@ export function TimelineTrackContent({
 					onTrackMouseDown?.(event);
 				}}
 			>
+				{findTransitions({ track }).map((placement) => (
+					<TransitionMarker
+						key={`${placement.outgoingId}:${placement.incomingId}`}
+						trackId={track.id}
+						placement={placement}
+						zoomLevel={zoomLevel}
+					/>
+				))}
+				{seamTime !== null ? (
+					<div
+						aria-hidden
+						className="bg-primary pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 rounded-full"
+						style={{
+							left: timelineTimeToPixels({ time: seamTime, zoomLevel }),
+							zIndex: TIMELINE_LAYERS.trackContent + 1,
+						}}
+					/>
+				) : null}
 				{track.elements.length === 0 ? (
 					<div className="text-muted-foreground border-muted/30 pointer-events-none flex size-full items-center justify-center rounded-sm border-2 border-dashed text-xs" />
 				) : (

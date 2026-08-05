@@ -17,6 +17,12 @@ import {
 	readBlendModeFromParams,
 	readOpacityFromParams,
 } from "@/rendering";
+import { pickClipAdjustmentParams } from "@/adjustments/clip";
+import {
+	findTransitions,
+	getTransitionBindingsForElement,
+} from "@/transitions";
+import type { TransitionPlacement } from "@/transitions/types";
 
 const PREVIEW_MAX_IMAGE_SIZE = 2048;
 
@@ -28,6 +34,51 @@ function getVisibleSortedElements({ track }: { track: TimelineTrack }) {
 			if (a.startTime !== b.startTime) return a.startTime - b.startTime;
 			return a.id.localeCompare(b.id);
 		});
+}
+
+/**
+ * The clips that must decode from a position of their own rather than the one
+ * shared per asset. Both sides of a transition need a different frame of their
+ * source at the same moment, and one decoder can only be in one place — the
+ * later request supersedes the earlier one, which then receives whatever frame
+ * happens to be current. Splitting a clip and putting a transition on the cut is
+ * the usual way to end up with two clips reading one file at once.
+ *
+ * Only the incoming side moves onto its own decoder, so the outgoing clip keeps
+ * the shared one and an ordinary timeline never pays for a second.
+ */
+function getOwnDecoderElementIds({
+	placements,
+	track,
+}: {
+	placements: TransitionPlacement[];
+	track: TimelineTrack;
+}): Set<string> {
+	const mediaIdOf = new Map(
+		track.elements.map((element) => [
+			element.id,
+			"mediaId" in element ? element.mediaId : undefined,
+		]),
+	);
+	const ids = new Set<string>();
+
+	for (const placement of placements) {
+		if (placement.sides.length < 2) {
+			continue;
+		}
+		const mediaIds = placement.sides.map((side) =>
+			mediaIdOf.get(side.elementId),
+		);
+		if (mediaIds[0] === undefined || mediaIds[0] !== mediaIds[1]) {
+			continue;
+		}
+		const incoming = placement.sides.find((side) => side.role === "incoming");
+		if (incoming) {
+			ids.add(incoming.elementId);
+		}
+	}
+
+	return ids;
 }
 
 function buildTrackNodes({
@@ -45,6 +96,15 @@ function buildTrackNodes({
 
 	for (const track of tracks) {
 		const elements = getVisibleSortedElements({ track });
+		// Transitions come from the track as stored, not from `elements`: the
+		// transition commands resolve neighbours the same way, so a hidden clip
+		// keeps owning its cut and unhiding it does not silently move the
+		// transition.
+		const transitionPlacements = findTransitions({ track });
+		const ownDecoderElementIds = getOwnDecoderElementIds({
+			placements: transitionPlacements,
+			track,
+		});
 
 		for (const element of elements) {
 			if (element.type === "effect") {
@@ -65,6 +125,11 @@ function buildTrackNodes({
 					continue;
 				}
 
+				const transitions = getTransitionBindingsForElement({
+					placements: transitionPlacements,
+					elementId: element.id,
+				});
+
 				if (element.type === "video" && mediaAsset.type === "video") {
 					nodes.push(
 						new VideoNode({
@@ -76,12 +141,19 @@ function buildTrackNodes({
 							trimStart: element.trimStart,
 							trimEnd: element.trimEnd,
 							retime: element.retime,
+							freeze: element.freeze,
 							transform: buildTransformFromParams({ params: element.params }),
 							animations: element.animations,
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: readBlendModeFromParams({ params: element.params }),
+							adjustParams: pickClipAdjustmentParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							transitions,
+							fade: element.fade,
+							...(ownDecoderElementIds.has(element.id) && {
+								sinkKey: `${mediaAsset.id}:${element.id}`,
+							}),
 						}),
 					);
 				}
@@ -97,8 +169,11 @@ function buildTrackNodes({
 							animations: element.animations,
 							opacity: readOpacityFromParams({ params: element.params }),
 							blendMode: readBlendModeFromParams({ params: element.params }),
+							adjustParams: pickClipAdjustmentParams({ params: element.params }),
 							effects: element.effects ?? [],
 							masks: element.masks ?? [],
+							transitions,
+							fade: element.fade,
 							...(isPreview && {
 								maxSourceSize: PREVIEW_MAX_IMAGE_SIZE,
 							}),
@@ -114,6 +189,7 @@ function buildTrackNodes({
 						transform: buildTransformFromParams({ params: element.params }),
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
+						adjustParams: pickClipAdjustmentParams({ params: element.params }),
 						canvasCenter: { x: canvasSize.width / 2, y: canvasSize.height / 2 },
 						canvasHeight: canvasSize.height,
 						textBaseline: "middle",
@@ -136,6 +212,7 @@ function buildTrackNodes({
 						animations: element.animations,
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
+						adjustParams: pickClipAdjustmentParams({ params: element.params }),
 						effects: element.effects ?? [],
 					}),
 				);
@@ -154,6 +231,7 @@ function buildTrackNodes({
 						animations: element.animations,
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
+						adjustParams: pickClipAdjustmentParams({ params: element.params }),
 						effects: element.effects ?? [],
 						masks: element.masks ?? [],
 					}),
@@ -206,6 +284,7 @@ function buildBlurBackgroundNodes({
 				trimStart: element.trimStart,
 				trimEnd: element.trimEnd,
 				retime: element.type === "video" ? element.retime : undefined,
+				freeze: element.type === "video" ? element.freeze : undefined,
 				blurIntensity,
 			}),
 		);

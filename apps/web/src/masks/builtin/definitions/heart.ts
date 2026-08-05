@@ -6,8 +6,8 @@ import {
 	getBoxLikeGeometry,
 	getDefaultSquareMaskParams,
 	getStrokeOffset,
-	rotatePoint,
 } from "../box-like";
+import { rotatePointAround } from "@/utils/geometry";
 
 function buildHeartPath({
 	centerX,
@@ -22,14 +22,8 @@ function buildHeartPath({
 	halfHeight: number;
 	rotationRad: number;
 }): Path2D {
-	const toPoint = ({
-		localX,
-		localY,
-	}: {
-		localX: number;
-		localY: number;
-	}) =>
-		rotatePoint({
+	const toPoint = ({ localX, localY }: { localX: number; localY: number }) =>
+		rotatePointAround({
 			x: centerX + localX,
 			y: centerY + localY,
 			centerX,

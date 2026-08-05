@@ -22,11 +22,3 @@ export function registerDefaultGraphics(): void {
 		});
 	}
 }
-
-export {
-	ellipseGraphicDefinition,
-	polygonGraphicDefinition,
-	rectangleGraphicDefinition,
-	starGraphicDefinition,
-};
-export { STROKE_ALIGN_PARAM } from "./shared";

@@ -17,6 +17,7 @@ export const TIMELINE_TRACK_THEME: Record<
 	},
 	graphic: { elementClassName: "bg-[#BA5D7A]" },
 	effect: { elementClassName: "bg-[#5d93ba]" },
+	adjustment: { elementClassName: "bg-[#BA935D]" },
 } as const;
 
 export const SELECTED_TRACK_ROW_CLASS = "bg-accent/50";

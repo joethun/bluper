@@ -8,7 +8,8 @@ import { generateUUID } from "@/utils/id";
 import { EditorCore } from "@/core";
 import { isRetimableElement } from "@/timeline";
 import { splitAnimationsAtTime } from "@/animation";
-import { getSourceSpanAtClipTime } from "@/retime";
+import { getSourceSpanAtClipTime, splitRetimeAtClipTime } from "@/retime";
+import { stripTransitionIn } from "@/transitions";
 import {
 	addMediaTime,
 	type MediaTime,
@@ -99,15 +100,25 @@ export class SplitElementsCommand extends Command {
 				const leftSourceSpan = roundMediaTime({
 					time: getSourceSpanAtClipTime({
 						clipTime: leftVisibleDuration,
+						clipDuration: element.duration,
 						retime: retimeRef,
 					}),
 				});
 				const totalSourceSpan = roundMediaTime({
 					time: getSourceSpanAtClipTime({
 						clipTime: element.duration,
+						clipDuration: element.duration,
 						retime: retimeRef,
 					}),
 				});
+				// A curve is cut where the clip is: each half keeps the stretch of
+				// shape over the material it still holds.
+				const { left: leftRetime, right: rightRetime } =
+					splitRetimeAtClipTime({
+						retime: retimeRef,
+						splitClipTime: relativeTime,
+						clipDuration: element.duration,
+					});
 				const rightSourceSpan = subMediaTime({
 					a: totalSourceSpan,
 					b: leftSourceSpan,
@@ -136,7 +147,7 @@ export class SplitElementsCommand extends Command {
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
+							...(leftRetime !== undefined ? { retime: leftRetime } : {}),
 						},
 					];
 				} else if (this.retainSide === "right") {
@@ -146,16 +157,21 @@ export class SplitElementsCommand extends Command {
 						elementId: newId,
 					});
 					splitResult = [
-						{
-							...element,
-							id: newId,
-							startTime: this.splitTime,
-							duration: rightVisibleDuration,
-							trimStart: rightTrimStart,
-							name: `${element.name} (right)`,
-							animations: rightAnimations,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
-						},
+						// The split invents a boundary inside the clip, so the trailing
+						// half must not inherit the transition that belonged to the
+						// original clip's start.
+						stripTransitionIn({
+							element: {
+								...element,
+								id: newId,
+								startTime: this.splitTime,
+								duration: rightVisibleDuration,
+								trimStart: rightTrimStart,
+								name: `${element.name} (right)`,
+								animations: rightAnimations,
+								...(rightRetime !== undefined ? { retime: rightRetime } : {}),
+							},
+						}),
 					];
 				} else {
 					const secondElementId = generateUUID();
@@ -170,18 +186,20 @@ export class SplitElementsCommand extends Command {
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
+							...(leftRetime !== undefined ? { retime: leftRetime } : {}),
 						},
-						{
-							...element,
-							id: secondElementId,
-							startTime: this.splitTime,
-							duration: rightVisibleDuration,
-							trimStart: rightTrimStart,
-							name: `${element.name} (right)`,
-							animations: rightAnimations,
-							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
-						},
+						stripTransitionIn({
+							element: {
+								...element,
+								id: secondElementId,
+								startTime: this.splitTime,
+								duration: rightVisibleDuration,
+								trimStart: rightTrimStart,
+								name: `${element.name} (right)`,
+								animations: rightAnimations,
+								...(rightRetime !== undefined ? { retime: rightRetime } : {}),
+							},
+						}),
 					];
 				}
 

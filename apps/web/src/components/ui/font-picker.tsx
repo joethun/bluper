@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect, useCallback, type CSSProperties } from "react";
+import {
+	useState,
+	useMemo,
+	useRef,
+	useEffect,
+	useCallback,
+	type CSSProperties,
+} from "react";
 import { List, type RowComponentProps } from "react-window";
 import {
 	Popover,
@@ -10,26 +17,26 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { loadFullFont } from "@/fonts/google-fonts";
+import { CUSTOM_FONT_ACCEPT, type CustomFont } from "@/fonts/custom-fonts";
+import { useCustomFonts } from "@/fonts/use-custom-fonts";
 import { SYSTEM_FONTS } from "@/fonts/system-fonts";
 import type { FontAtlas, FontAtlasEntry } from "@/fonts/types";
 import { useFontAtlas } from "@/fonts/use-font-atlas";
 import { cn } from "@/utils/ui";
-import { ChevronDown, Search } from "lucide-react";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { TextIcon } from "@hugeicons/core-free-icons";
+import {
+	CheckIcon,
+	ChevronDownIcon,
+	PlusIcon,
+	SearchIcon,
+	Trash2Icon,
+} from "lucide-react";
 
-const FONT_TABS = [
-	{ key: "all", label: "All fonts" },
-	{ key: "my-fonts", label: "My fonts" },
-	{ key: "favorites", label: "Favorites" },
-] as const;
-
-type FontTab = (typeof FONT_TABS)[number]["key"];
-
+// Must match ROW_HEIGHT in scripts/generate-font-sprites.ts. The sprite sheet
+// packs each family into a 40px band and we address it by pixel offset, so a
+// shorter row crops the descenders off every Google preview.
 const ROW_HEIGHT = 40;
 const PREVIEW_SCALE = 0.8;
-const LIST_WIDTH = 288;
-const MAX_LIST_HEIGHT = 288;
+const MAX_LIST_HEIGHT = 280;
 const OVERSCAN = 15;
 
 interface FontPickerProps {
@@ -45,15 +52,35 @@ export function FontPicker({
 }: FontPickerProps) {
 	const [open, setOpen] = useState(false);
 	const [search, setSearch] = useState("");
-	const [activeTab, setActiveTab] = useState<FontTab>("all");
 	const searchInputRef = useRef<HTMLInputElement>(null);
+	const uploadInputRef = useRef<HTMLInputElement>(null);
 	const { atlas, status, fontNames, retry: handleRetry } = useFontAtlas({ open });
+	const {
+		fonts: customFonts,
+		upload,
+		remove,
+		error: uploadError,
+		dismissError,
+		isUploading,
+	} = useCustomFonts();
+
+	const customFamilies = useMemo(
+		() => customFonts.map((font) => font.family),
+		[customFonts],
+	);
+
+	// Uploaded fonts lead the list so they stay reachable without searching —
+	// they'd otherwise be buried alphabetically among ~1,900 Google families.
+	const allFontNames = useMemo(
+		() => [...customFamilies, ...fontNames],
+		[customFamilies, fontNames],
+	);
 
 	const filteredFonts = useMemo(() => {
-		if (!search) return fontNames;
+		if (!search) return allFontNames;
 		const query = search.toLowerCase();
-		return fontNames.filter((name) => name.toLowerCase().includes(query));
-	}, [fontNames, search]);
+		return allFontNames.filter((name) => name.toLowerCase().includes(query));
+	}, [allFontNames, search]);
 
 	const listHeight = Math.min(
 		MAX_LIST_HEIGHT,
@@ -62,7 +89,8 @@ export function FontPicker({
 
 	const handleSelect = useCallback(
 		async ({ family }: { family: string }) => {
-			if (!SYSTEM_FONTS.has(family)) {
+			const isCustom = customFamilies.includes(family);
+			if (!isCustom && !SYSTEM_FONTS.has(family)) {
 				try {
 					await loadFullFont({ family });
 				} catch {
@@ -72,18 +100,29 @@ export function FontPicker({
 			onValueChange?.(family);
 			setOpen(false);
 		},
-		[onValueChange],
+		[customFamilies, onValueChange],
+	);
+
+	const handleUploadClick = useCallback(() => {
+		uploadInputRef.current?.click();
+	}, []);
+
+	const handleFilesSelected = useCallback(
+		async (event: React.ChangeEvent<HTMLInputElement>) => {
+			const files = Array.from(event.target.files ?? []);
+			event.target.value = "";
+			if (files.length === 0) return;
+			await upload({ files });
+		},
+		[upload],
 	);
 
 	useEffect(() => {
 		if (!open) {
 			setSearch("");
-			setActiveTab("all");
+			dismissError();
 		}
-	}, [open]);
-
-	const activeTabLabel =
-		FONT_TABS.find((t) => t.key === activeTab)?.label.toLowerCase() ?? "";
+	}, [open, dismissError]);
 
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
@@ -93,20 +132,21 @@ export function FontPicker({
 					className,
 				)}
 			>
-				<div className="flex min-w-0 items-center gap-1.5">
-					<span className="text-muted-foreground [&_svg]:size-3.5 shrink-0">
-						<HugeiconsIcon icon={TextIcon} />
-					</span>
-					<span className="truncate" style={{ fontFamily: defaultValue }}>
-						{defaultValue ?? "Select a font"}
-					</span>
-				</div>
-				<ChevronDown className="size-3 shrink-0 opacity-50" />
+				<span className="truncate" style={{ fontFamily: defaultValue }}>
+					{defaultValue ?? "Select a font"}
+				</span>
+				<ChevronDownIcon className="size-3.5 shrink-0 opacity-50" />
 			</PopoverTrigger>
+			{/*
+			 * Chrome matches ColorPicker, the sibling popover field in this panel:
+			 * same width, px-0 with per-section padding, py-2 rather than the
+			 * default p-4 so the search field isn't floating in dead space.
+			 */}
 			<PopoverContent
-				className="w-72 p-0 overflow-hidden"
+				className="flex w-64 flex-col gap-2 overflow-hidden px-0 py-2"
 				align="start"
 				side="left"
+				sideOffset={8}
 				onOpenAutoFocus={(event) => {
 					event.preventDefault();
 					searchInputRef.current?.focus();
@@ -116,42 +156,53 @@ export function FontPicker({
 					event.stopPropagation();
 				}}
 			>
-				<div className="relative px-3 py-1.5">
-					<Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 shrink-0 opacity-50" />
-					<Input
-						ref={searchInputRef}
-						placeholder={`Search ${activeTabLabel}...`}
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						size="xs"
-						className="w-full pl-5 bg-transparent border-none! shadow-none!"
-					/>
-				</div>
-				<div className="flex border-b px-3">
-					{FONT_TABS.map((tab) => (
-						<button
-							key={tab.key}
-							type="button"
-							className={cn(
-								"px-3 py-1.5 text-xs border-b-2 -mb-px",
-								activeTab === tab.key
-									? "border-foreground text-foreground"
-									: "border-transparent text-muted-foreground hover:text-foreground",
-							)}
-							onClick={() => setActiveTab(tab.key)}
-						>
-							{tab.label}
-						</button>
-					))}
-				</div>
-				{status === "loading" && (
-					<div className="py-8 text-center text-sm text-muted-foreground">
-						Loading fonts...
+				<input
+					ref={uploadInputRef}
+					type="file"
+					accept={CUSTOM_FONT_ACCEPT}
+					multiple
+					className="hidden"
+					onChange={handleFilesSelected}
+				/>
+
+				<div className="flex items-center gap-1 border-b px-3 pb-2">
+					<div className="relative flex-1">
+						<SearchIcon className="text-muted-foreground pointer-events-none absolute left-0 top-1/2 size-3.5 -translate-y-1/2" />
+						<Input
+							ref={searchInputRef}
+							placeholder="Search fonts..."
+							value={search}
+							onChange={(event) => setSearch(event.target.value)}
+							size="xs"
+							className="h-6 w-full border-none! bg-transparent px-0 pl-5 shadow-none!"
+						/>
 					</div>
+					<Button
+						variant="ghost"
+						size="icon"
+						className="size-6 shrink-0"
+						disabled={isUploading}
+						title="Add a font from your computer"
+						aria-label="Add a font from your computer"
+						onClick={handleUploadClick}
+					>
+						<PlusIcon />
+					</Button>
+				</div>
+
+				{uploadError && (
+					<p className="text-destructive px-3 text-xs">{uploadError}</p>
 				)}
+
+				{status === "loading" && (
+					<p className="text-muted-foreground py-8 text-center text-sm">
+						Loading fonts...
+					</p>
+				)}
+
 				{status === "error" && (
-					<div className="flex flex-col items-center gap-3 py-8 px-4">
-						<p className="text-sm text-muted-foreground text-center">
+					<div className="flex flex-col items-center gap-3 px-3 py-8">
+						<p className="text-muted-foreground text-center text-sm">
 							Failed to load font previews.
 						</p>
 						<Button variant="outline" size="sm" onClick={handleRetry}>
@@ -159,26 +210,28 @@ export function FontPicker({
 						</Button>
 					</div>
 				)}
-				{status === "idle" &&
-					fontNames.length > 0 &&
-					filteredFonts.length === 0 && (
-						<div className="py-6 text-center text-sm text-muted-foreground">
-							No fonts found.
-						</div>
-					)}
-				{status === "idle" && atlas && filteredFonts.length > 0 && (
+
+				{status === "idle" && filteredFonts.length === 0 && (
+					<p className="text-muted-foreground py-6 text-center text-sm">
+						No fonts found.
+					</p>
+				)}
+
+				{status === "idle" && filteredFonts.length > 0 && (
 					<List
 						rowCount={filteredFonts.length}
 						rowHeight={ROW_HEIGHT}
 						overscanCount={OVERSCAN}
 						rowComponent={FontRow}
 						rowProps={{
+							fonts: filteredFonts,
 							atlas,
-							filteredFonts,
+							customFonts,
 							selectedFont: defaultValue,
 							onFontSelect: handleSelect,
+							onFontRemove: remove,
 						}}
-						style={{ height: listHeight, width: LIST_WIDTH }}
+						style={{ height: listHeight, width: "100%" }}
 					/>
 				)}
 			</PopoverContent>
@@ -208,51 +261,71 @@ function FontSpritePreview({ entry }: { entry: FontAtlasEntry }) {
 }
 
 type FontRowProps = {
-	atlas: FontAtlas;
-	filteredFonts: string[];
+	fonts: string[];
+	atlas: FontAtlas | null;
+	customFonts: CustomFont[];
 	selectedFont: string | undefined;
 	onFontSelect: (params: { family: string }) => void;
+	onFontRemove: (params: { id: string }) => void;
 };
 
 function FontRow({
 	index,
 	style,
+	fonts,
 	atlas,
-	filteredFonts,
+	customFonts,
 	selectedFont,
 	onFontSelect,
+	onFontRemove,
 }: RowComponentProps<FontRowProps>) {
-	const fontName = filteredFonts[index];
-	const entry = atlas.fonts[fontName];
+	const fontName = fonts[index];
+	const customFont = customFonts.find((font) => font.family === fontName);
+	const entry = atlas?.fonts[fontName];
 	const isSelected = fontName === selectedFont;
-	const isSystemFont = SYSTEM_FONTS.has(fontName);
+	// System and custom faces are installed in the document, so they render as
+	// live text. Google families fall back to the prebuilt sprite until loaded.
+	const canRenderLive = Boolean(customFont) || SYSTEM_FONTS.has(fontName);
 
 	return (
-		<button
-			type="button"
+		<div
 			style={style as CSSProperties}
 			className={cn(
-				"flex w-full cursor-pointer items-center gap-2 px-3 outline-hidden hover:bg-popover-hover",
+				"group hover:bg-popover-hover flex items-center gap-2 px-3",
 				isSelected && "bg-popover-hover",
 			)}
-			onClick={() => onFontSelect({ family: fontName })}
-			onKeyDown={(event) => {
-				if (event.key === "Enter" || event.key === " ") {
-					event.preventDefault();
-					onFontSelect({ family: fontName });
-				}
-			}}
-			aria-label={fontName}
 		>
-			<div className="min-w-0 overflow-hidden">
-				{isSystemFont ? (
-					<span className="text-xl text-foreground/85" style={{ fontFamily: fontName }}>
+			<button
+				type="button"
+				className="flex min-w-0 flex-1 cursor-pointer items-center overflow-hidden text-left outline-hidden"
+				onClick={() => onFontSelect({ family: fontName })}
+				aria-label={fontName}
+			>
+				{canRenderLive || !entry ? (
+					<span
+						className="text-foreground/85 truncate text-xl"
+						style={{ fontFamily: fontName }}
+					>
 						{fontName}
 					</span>
 				) : (
 					<FontSpritePreview entry={entry} />
 				)}
-			</div>
-		</button>
+			</button>
+			{customFont && (
+				<button
+					type="button"
+					className="text-muted-foreground hover:text-destructive shrink-0 cursor-pointer opacity-0 outline-hidden group-hover:opacity-100 focus-visible:opacity-100"
+					onClick={(event) => {
+						event.stopPropagation();
+						onFontRemove({ id: customFont.id });
+					}}
+					aria-label={`Remove ${fontName}`}
+				>
+					<Trash2Icon className="size-3.5" />
+				</button>
+			)}
+			{isSelected && <CheckIcon className="text-foreground size-4 shrink-0" />}
+		</div>
 	);
 }

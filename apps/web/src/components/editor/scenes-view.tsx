@@ -9,7 +9,7 @@ import {
 	SheetTrigger,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Check, ListCheck, Trash2 } from "lucide-react";
+import { CheckIcon, ListCheckIcon, Trash2Icon } from "lucide-react";
 import { cn } from "@/utils/ui";
 import { useState } from "react";
 import {
@@ -112,7 +112,7 @@ export function ScenesView({ children }: { children: React.ReactNode }) {
 							size="sm"
 							onClick={handleSelectMode}
 						>
-							<ListCheck />
+							<ListCheckIcon />
 							{isSelectMode ? "Cancel" : "Select"}
 						</Button>
 						{isSelectMode && (
@@ -127,7 +127,7 @@ export function ScenesView({ children }: { children: React.ReactNode }) {
 										disabled={isMainSceneSelected}
 										size="sm"
 									>
-										<Trash2 />
+										<Trash2Icon />
 										Delete ({selectedScenes.size})
 									</Button>
 								}
@@ -159,7 +159,7 @@ export function ScenesView({ children }: { children: React.ReactNode }) {
 									<div className="flex items-center gap-2">
 										{((isSelectMode && selectedScenes.has(scene.id)) ||
 											(!isSelectMode && currentScene?.id === scene.id)) && (
-											<Check className="size-4" />
+											<CheckIcon className="size-4" />
 										)}
 									</div>
 								</Button>

@@ -10,6 +10,7 @@ import {
 	buildTimelineSnapPoints,
 	getTimelineSnapThresholdInTicks,
 	resolveTimelineSnap,
+	type SnapPoint,
 } from "@/timeline/snapping";
 import { getBookmarkSnapPoints } from "@/timeline/bookmarks/index";
 import { getElementEdgeSnapPoints } from "@/timeline/element-snap-source";
@@ -26,12 +27,21 @@ import type { Bookmark, SceneTracks } from "@/timeline";
 
 interface ScrubSession {
 	kind: "scrubbing";
-	/** True when scrub started from a ruler click (not the playhead handle). */
-	didStartFromRuler: boolean;
-	/** True once the mouse has moved during a ruler drag. */
-	hasMoved: boolean;
 	/** Most recent frame-snapped time set by scrub(). */
 	currentTime: MediaTime | null;
+	/**
+	 * Snap candidates, built once on first use and reused for the gesture.
+	 * The timeline cannot be edited mid-scrub, so element edges, bookmarks and
+	 * keyframes are all fixed — rebuilding them per mousemove walked every
+	 * element and every keyframe in the scene and threw the result away.
+	 */
+	snapPoints: SnapPoint[] | null;
+	/**
+	 * The ruler's client-space left edge with scroll removed, cached once per
+	 * gesture. Reading `getBoundingClientRect()` per mousemove forced a reflow
+	 * of the whole timeline, because each scrub writes the playhead's `left`.
+	 */
+	rulerOriginLeft: number | null;
 }
 
 type Session = { kind: "idle" } | ScrubSession;
@@ -67,21 +77,17 @@ export interface PlayheadConfigRef {
 
 function pixelToTime({
 	clientX,
-	rulerEl,
+	rulerLeft,
 	zoomLevel,
 	duration,
 }: {
 	clientX: number;
-	rulerEl: HTMLDivElement;
+	rulerLeft: number;
 	zoomLevel: number;
 	duration: MediaTime;
 }): MediaTime {
-	const rulerRect = rulerEl.getBoundingClientRect();
 	const contentWidth = timelineTimeToPixels({ time: duration, zoomLevel });
-	const clampedX = Math.max(
-		0,
-		Math.min(contentWidth, clientX - rulerRect.left),
-	);
+	const clampedX = Math.max(0, Math.min(contentWidth, clientX - rulerLeft));
 	const seconds = Math.max(
 		0,
 		Math.min(
@@ -99,6 +105,9 @@ export class PlayheadController {
 
 	private session: Session = { kind: "idle" };
 	private readonly configRef: PlayheadConfigRef;
+	/** Latest un-applied pointer position, drained by the rAF below. */
+	private pendingClientX: number | null = null;
+	private moveRafId: number | null = null;
 
 	constructor(deps: { configRef: PlayheadConfigRef }) {
 		this.configRef = deps.configRef;
@@ -131,12 +140,12 @@ export class PlayheadController {
 		event.stopPropagation();
 		this.session = {
 			kind: "scrubbing",
-			didStartFromRuler: false,
-			hasMoved: false,
 			currentTime: null,
+			snapPoints: null,
+			rulerOriginLeft: null,
 		};
 		this.config.setScrubbing(true);
-		this.scrub({ event, isElementSnappingEnabled: true });
+		this.scrub({ clientX: event.clientX, isElementSnappingEnabled: true });
 		this.activate();
 	}
 
@@ -147,13 +156,13 @@ export class PlayheadController {
 		event.preventDefault();
 		this.session = {
 			kind: "scrubbing",
-			didStartFromRuler: true,
-			hasMoved: false,
 			currentTime: null,
+			snapPoints: null,
+			rulerOriginLeft: null,
 		};
 		this.config.setScrubbing(true);
 		// No element-edge snapping on initial ruler click — avoids a jarring jump.
-		this.scrub({ event, isElementSnappingEnabled: false });
+		this.scrub({ clientX: event.clientX, isElementSnappingEnabled: false });
 		this.activate();
 	}
 
@@ -222,6 +231,11 @@ export class PlayheadController {
 	private deactivate(): void {
 		window.removeEventListener("mousemove", this.handleMouseMove);
 		window.removeEventListener("mouseup", this.handleMouseUp);
+		if (this.moveRafId !== null) {
+			cancelAnimationFrame(this.moveRafId);
+			this.moveRafId = null;
+		}
+		this.pendingClientX = null;
 	}
 
 	/**
@@ -230,10 +244,10 @@ export class PlayheadController {
 	 * is always applied.
 	 */
 	private scrub({
-		event,
+		clientX,
 		isElementSnappingEnabled,
 	}: {
-		event: MouseEvent | ReactMouseEvent;
+		clientX: number;
 		isElementSnappingEnabled: boolean;
 	}): void {
 		const ruler = this.config.getRulerEl();
@@ -244,8 +258,8 @@ export class PlayheadController {
 
 		const { zoomLevel, duration } = this.config;
 		const rawTime = pixelToTime({
-			clientX: event.clientX,
-			rulerEl: ruler,
+			clientX,
+			rulerLeft: this.getRulerLeft({ ruler }),
 			zoomLevel,
 			duration,
 		});
@@ -255,23 +269,9 @@ export class PlayheadController {
 			if (!isElementSnappingEnabled || this.config.isShiftHeld())
 				return frameTime;
 
-			const snapPoints = buildTimelineSnapPoints({
-				sources: [
-					() =>
-						getElementEdgeSnapPoints({ tracks: this.config.getSceneTracks() }),
-					() =>
-						getBookmarkSnapPoints({
-							bookmarks: this.config.getSceneBookmarks(),
-						}),
-					() =>
-						getAnimationKeyframeSnapPointsForTimeline({
-							tracks: this.config.getSceneTracks(),
-						}),
-				],
-			});
 			const result = resolveTimelineSnap({
 				targetTime: frameTime,
-				snapPoints,
+				snapPoints: this.getSnapPoints(),
 				maxSnapDistance: getTimelineSnapThresholdInTicks({ zoomLevel }),
 			});
 			return result.snapPoint ? result.snappedTime : frameTime;
@@ -281,35 +281,111 @@ export class PlayheadController {
 			this.session.currentTime = time;
 		}
 		this.config.seek(time);
-		this.lastMouseClientX = event.clientX;
+		this.lastMouseClientX = clientX;
 	}
 
+	/**
+	 * Snap candidates for the active gesture, built at most once. Outside a
+	 * session (a bare ruler click) they are built fresh and not retained.
+	 */
+	private getSnapPoints(): SnapPoint[] {
+		if (this.session.kind === "scrubbing" && this.session.snapPoints) {
+			return this.session.snapPoints;
+		}
+
+		const snapPoints = buildTimelineSnapPoints({
+			sources: [
+				() => getElementEdgeSnapPoints({ tracks: this.config.getSceneTracks() }),
+				() =>
+					getBookmarkSnapPoints({
+						bookmarks: this.config.getSceneBookmarks(),
+					}),
+				() =>
+					getAnimationKeyframeSnapPointsForTimeline({
+						tracks: this.config.getSceneTracks(),
+					}),
+			],
+		});
+
+		if (this.session.kind === "scrubbing") {
+			this.session.snapPoints = snapPoints;
+		}
+		return snapPoints;
+	}
+
+	/**
+	 * The ruler's left edge in client space. The ruler lives inside the
+	 * horizontally scrolled ruler viewport, so its rect shifts as the viewport
+	 * scrolls (edge auto-scroll does exactly that mid-gesture). Cache the
+	 * scroll-independent origin once, then re-derive from the live scrollLeft —
+	 * reading scrollLeft is far cheaper than a rect read after a style write.
+	 */
+	private getRulerLeft({ ruler }: { ruler: HTMLDivElement }): number {
+		const scrollLeft = this.config.getRulerScrollEl()?.scrollLeft ?? 0;
+
+		if (this.session.kind !== "scrubbing") {
+			return ruler.getBoundingClientRect().left;
+		}
+
+		if (this.session.rulerOriginLeft === null) {
+			this.session.rulerOriginLeft =
+				ruler.getBoundingClientRect().left + scrollLeft;
+		}
+		return this.session.rulerOriginLeft - scrollLeft;
+	}
+
+	/**
+	 * Mousemove can fire more than once per frame; each scrub seeks and writes
+	 * the playhead's `left`, so collapse a frame's worth of movement into a
+	 * single update using the latest position.
+	 */
 	private handleMouseMove(event: MouseEvent): void {
 		if (this.session.kind !== "scrubbing") return;
-		this.scrub({ event, isElementSnappingEnabled: true });
-		if (this.session.didStartFromRuler) {
-			this.session.hasMoved = true;
-		}
+
+		// Kept eager: edge auto-scroll polls this every frame.
+		this.lastMouseClientX = event.clientX;
+		this.pendingClientX = event.clientX;
+
+		if (this.moveRafId !== null) return;
+		this.moveRafId = requestAnimationFrame(() => {
+			this.moveRafId = null;
+			const clientX = this.pendingClientX;
+			this.pendingClientX = null;
+			if (clientX === null) return;
+			if (this.session.kind !== "scrubbing") return;
+			this.scrub({ clientX, isElementSnappingEnabled: true });
+		});
 	}
 
-	private handleMouseUp(event: MouseEvent): void {
+	private handleMouseUp(): void {
 		if (this.session.kind !== "scrubbing") return;
+
+		// Apply any movement still waiting on a frame, so releasing the mouse
+		// never drops the last sliver of the drag.
+		if (this.moveRafId !== null) {
+			cancelAnimationFrame(this.moveRafId);
+			this.moveRafId = null;
+		}
+		if (this.pendingClientX !== null) {
+			const clientX = this.pendingClientX;
+			this.pendingClientX = null;
+			this.scrub({ clientX, isElementSnappingEnabled: true });
+		}
 
 		const session = this.session;
 		this.config.setScrubbing(false);
 
+		// Persist only — do not seek again. Every scrub already seeked to
+		// `currentTime`, so re-issuing it here is a no-op when paused but rewinds
+		// during playback: the clock has advanced past the gesture's time since
+		// mousedown, so the playhead snaps backwards a frame or two and the single
+		// click reads as two clicks a few dozen milliseconds apart.
 		if (session.currentTime !== null) {
-			this.config.seek(session.currentTime);
 			this.config.setTimelineViewState({
 				zoomLevel: this.config.zoomLevel,
 				scrollLeft: this.config.getTracksScrollEl()?.scrollLeft ?? 0,
 				playheadTime: session.currentTime,
 			});
-		}
-
-		// Ruler click without drag: snap to clicked position on mouseup.
-		if (session.didStartFromRuler && !session.hasMoved) {
-			this.scrub({ event, isElementSnappingEnabled: false });
 		}
 
 		this.session = { kind: "idle" };

@@ -45,7 +45,7 @@ export function timelineTimeToPixels({
 	return (time / TICKS_PER_SECOND) * getTimelinePixelsPerSecond({ zoomLevel });
 }
 
-export function snapPixelToDeviceGrid({
+function snapPixelToDeviceGrid({
 	pixel,
 	devicePixelRatio,
 }: {

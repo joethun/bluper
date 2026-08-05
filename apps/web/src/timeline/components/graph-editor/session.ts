@@ -21,7 +21,7 @@ const GRAPH_LINEAR_CURVE: NormalizedCubicBezier = [0, 0, 1, 1];
 const FLAT_VALUE_EPSILON = 1e-6;
 const LINEAR_CURVE_EPSILON = 1e-6;
 
-export type GraphEditorUnavailableReason =
+type GraphEditorUnavailableReason =
 	| "no-keyframe-selected"
 	| "multiple-keyframes-selected"
 	| "selected-keyframes-span-multiple-elements"
@@ -47,7 +47,7 @@ interface GraphEditorPropertyOption {
 	allContexts: ScalarGraphKeyframeContext[];
 }
 
-export interface GraphEditorResolvedSegment {
+interface GraphEditorResolvedSegment {
 	propertyPath: SelectedKeyframeRef["propertyPath"];
 	keyframeId: string;
 	context: ScalarGraphKeyframeContext;
@@ -62,13 +62,13 @@ interface GraphEditorBaseSelectionState {
 	message: string;
 }
 
-export interface GraphEditorUnavailableState
+interface GraphEditorUnavailableState
 	extends GraphEditorBaseSelectionState {
 	status: "unavailable";
 	reason: GraphEditorUnavailableReason;
 }
 
-export interface GraphEditorReadyState extends GraphEditorBaseSelectionState {
+interface GraphEditorReadyState extends GraphEditorBaseSelectionState {
 	status: "ready";
 	trackId: string;
 	elementId: string;

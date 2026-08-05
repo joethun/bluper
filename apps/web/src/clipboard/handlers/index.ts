@@ -9,12 +9,12 @@ import type {
 import { ElementsClipboardHandler } from "./elements";
 import { KeyframesClipboardHandler } from "./keyframes";
 
-export const clipboardHandlers = {
+const clipboardHandlers = {
 	elements: ElementsClipboardHandler,
 	keyframes: KeyframesClipboardHandler,
 } satisfies ClipboardHandlerMap;
 
-export const clipboardCopyHandlers = [
+const clipboardCopyHandlers = [
 	KeyframesClipboardHandler,
 	ElementsClipboardHandler,
 ] as const satisfies readonly ClipboardHandler<ClipboardEntryType>[];

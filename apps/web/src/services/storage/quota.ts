@@ -2,7 +2,7 @@ import { formatNumberForDisplay } from "@/utils/math";
 
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
 
-export const STORAGE_HEADROOM_RESERVE_BYTES = 50 * 1024 * 1024;
+const STORAGE_HEADROOM_RESERVE_BYTES = 50 * 1024 * 1024;
 
 export interface StorageQuotaStatus {
 	quotaBytes: number | null;

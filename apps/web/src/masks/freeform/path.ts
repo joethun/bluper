@@ -1,4 +1,5 @@
 import type { ElementBounds } from "@/preview/element-bounds";
+import { rotateOffset, subdivideCubicBezier } from "@/utils/geometry";
 
 export interface FreeformPathPoint {
 	id: string;
@@ -8,54 +9,6 @@ export interface FreeformPathPoint {
 	inY: number;
 	outX: number;
 	outY: number;
-}
-
-function isFreeformPathPoint(value: unknown): value is FreeformPathPoint {
-	if (!value || typeof value !== "object") {
-		return false;
-	}
-
-	return (
-		"id" in value &&
-		typeof value.id === "string" &&
-		"x" in value &&
-		typeof value.x === "number" &&
-		"y" in value &&
-		typeof value.y === "number" &&
-		"inX" in value &&
-		typeof value.inX === "number" &&
-		"inY" in value &&
-		typeof value.inY === "number" &&
-		"outX" in value &&
-		typeof value.outX === "number" &&
-		"outY" in value &&
-		typeof value.outY === "number"
-	);
-}
-
-export function parseFreeformPath({
-	path,
-}: {
-	path: string;
-}): FreeformPathPoint[] {
-	if (!path) {
-		return [];
-	}
-
-	try {
-		const parsed = JSON.parse(path);
-		return Array.isArray(parsed) ? parsed.filter(isFreeformPathPoint) : [];
-	} catch {
-		return [];
-	}
-}
-
-export function serializeFreeformPath({
-	points,
-}: {
-	points: FreeformPathPoint[];
-}): string {
-	return JSON.stringify(points);
 }
 
 export function removeFreeformPathPoints({
@@ -91,16 +44,14 @@ function rotatePoint({
 	y: number;
 	rotationDegrees: number;
 }): { x: number; y: number } {
-	const angleRad = (rotationDegrees * Math.PI) / 180;
-	const cos = Math.cos(angleRad);
-	const sin = Math.sin(angleRad);
-	return {
-		x: x * cos - y * sin,
-		y: x * sin + y * cos,
-	};
+	return rotateOffset({
+		dx: x,
+		dy: y,
+		rotationRad: (rotationDegrees * Math.PI) / 180,
+	});
 }
 
-export function getFreeformCenterCanvasPoint({
+function getFreeformCenterCanvasPoint({
 	centerX,
 	centerY,
 	bounds,
@@ -115,7 +66,7 @@ export function getFreeformCenterCanvasPoint({
 	};
 }
 
-export function freeformLocalPointToCanvas({
+function freeformLocalPointToCanvas({
 	point,
 	centerX,
 	centerY,
@@ -313,21 +264,6 @@ function getDistanceSquared({
 	const dx = a.x - b.x;
 	const dy = a.y - b.y;
 	return dx * dx + dy * dy;
-}
-
-function lerpPoint({
-	a,
-	b,
-	t,
-}: {
-	a: CanvasPoint;
-	b: CanvasPoint;
-	t: number;
-}): CanvasPoint {
-	return {
-		x: a.x + (b.x - a.x) * t,
-		y: a.y + (b.y - a.y) * t,
-	};
 }
 
 function evaluateCubicBezier({
@@ -566,12 +502,13 @@ export function insertPointIntoFreeformSegment({
 		y: endPoint.y + endPoint.inY,
 	};
 	const p3 = { x: endPoint.x, y: endPoint.y };
-	const p01 = lerpPoint({ a: p0, b: p1, t: clampedT });
-	const p12 = lerpPoint({ a: p1, b: p2, t: clampedT });
-	const p23 = lerpPoint({ a: p2, b: p3, t: clampedT });
-	const p012 = lerpPoint({ a: p01, b: p12, t: clampedT });
-	const p123 = lerpPoint({ a: p12, b: p23, t: clampedT });
-	const splitPoint = lerpPoint({ a: p012, b: p123, t: clampedT });
+	const {
+		p01,
+		p23,
+		p012,
+		p123,
+		point: splitPoint,
+	} = subdivideCubicBezier({ p0, p1, p2, p3, t: clampedT });
 
 	const nextPoints = [...points];
 	nextPoints[indices.startIndex] = {

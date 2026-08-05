@@ -5,12 +5,7 @@ import { Popover, PopoverContent } from "@/components/ui/popover";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/ui";
-import { HugeiconsIcon } from "@hugeicons/react";
-import {
-	ArrowDown01Icon,
-	Delete02Icon,
-	PlusSignIcon,
-} from "@hugeicons/core-free-icons";
+import { ChevronDownIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { getBezierPoint } from "@/animation/bezier";
 import type { NormalizedCubicBezier } from "@/animation/types";
 import type { GraphEditorComponentOption } from "./session";
@@ -173,8 +168,7 @@ export function GraphEditorPopover({
 								)}
 							>
 								<div className="border-foreground/10 flex aspect-video w-full items-center justify-center rounded-sm border border-dashed">
-									<HugeiconsIcon
-										icon={PlusSignIcon}
+									<PlusIcon
 										className="size-3.5 opacity-40"
 									/>
 								</div>
@@ -229,8 +223,7 @@ function ExpandableGrid({
 						className="size-5"
 						onClick={onExpand}
 					>
-						<HugeiconsIcon
-							icon={ArrowDown01Icon}
+						<ChevronDownIcon
 							className="text-muted-foreground size-3"
 						/>
 					</Button>
@@ -292,7 +285,7 @@ function PresetItem({
 						onDelete();
 					}}
 				>
-					<HugeiconsIcon icon={Delete02Icon} />
+					<Trash2Icon />
 				</Button>
 			)}
 		</button>

@@ -18,7 +18,7 @@ import {
 	IconHandle,
 	getResizeCursor,
 } from "./handle-primitives";
-import { Rotate01Icon } from "@hugeicons/core-free-icons";
+import { RotateCwIcon } from "lucide-react";
 
 const CORNERS: Corner[] = [
 	"top-left",
@@ -134,7 +134,7 @@ export function TransformHandles({
 				);
 			})}
 			<IconHandle
-				icon={Rotate01Icon}
+				icon={RotateCwIcon}
 				screen={rotationHandleScreen}
 				onPointerDown={(event) => handleRotationPointerDown({ event })}
 				onPointerMove={onPointerMove}

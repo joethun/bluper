@@ -288,27 +288,3 @@ export function computeBoxMaskParamUpdate({
 
 	return {};
 }
-
-export function rotatePoint({
-	x,
-	y,
-	centerX,
-	centerY,
-	rotationRad,
-}: {
-	x: number;
-	y: number;
-	centerX: number;
-	centerY: number;
-	rotationRad: number;
-}) {
-	const dx = x - centerX;
-	const dy = y - centerY;
-	const cos = Math.cos(rotationRad);
-	const sin = Math.sin(rotationRad);
-
-	return {
-		x: centerX + dx * cos - dy * sin,
-		y: centerY + dx * sin + dy * cos,
-	};
-}

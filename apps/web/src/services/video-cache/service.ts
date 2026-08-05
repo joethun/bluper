@@ -7,6 +7,8 @@ import {
 } from "mediabunny";
 
 interface VideoSinkData {
+	/** The asset this decoder reads, so it can be released with its media. */
+	mediaId: string;
 	input: Input;
 	sink: CanvasSink;
 	iterator: AsyncGenerator<WrappedCanvas, void, unknown> | null;
@@ -17,38 +19,50 @@ interface VideoSinkData {
 	prefetchPromise: Promise<void> | null;
 }
 
-export class VideoCache {
+class VideoCache {
 	private sinks = new Map<string, VideoSinkData>();
 	private initPromises = new Map<string, Promise<void>>();
 	private frameChain = new Map<string, Promise<unknown>>();
 	private seekGenerations = new Map<string, number>();
 
+	/**
+	 * A decoder holds one position, so two clips needing different times of the
+	 * same file at the same moment cannot share it: the later request supersedes
+	 * the earlier one, which then silently receives whatever frame is current.
+	 * `sinkKey` lets such a clip ask for a decoder of its own. Everything else
+	 * keeps sharing one per asset, which is what makes ordinary playback cheap.
+	 */
 	async getFrameAt({
 		mediaId,
+		sinkKey = mediaId,
 		file,
 		time,
 	}: {
 		mediaId: string;
+		sinkKey?: string;
 		file: File;
 		time: number;
 	}): Promise<WrappedCanvas | null> {
-		await this.ensureSink({ mediaId, file });
+		await this.ensureSink({ sinkKey, mediaId, file });
 
-		const sinkData = this.sinks.get(mediaId);
+		const sinkData = this.sinks.get(sinkKey);
 		if (!sinkData) return null;
 
-		const generation = (this.seekGenerations.get(mediaId) ?? 0) + 1;
-		this.seekGenerations.set(mediaId, generation);
+		// Superseding is per decoder: a newer request on this one is a stale scrub
+		// and can be dropped, but a request from another clip is a frame that is
+		// still needed.
+		const generation = (this.seekGenerations.get(sinkKey) ?? 0) + 1;
+		this.seekGenerations.set(sinkKey, generation);
 
-		const previous = this.frameChain.get(mediaId) ?? Promise.resolve();
+		const previous = this.frameChain.get(sinkKey) ?? Promise.resolve();
 		const current = previous.then(() => {
-			if (this.seekGenerations.get(mediaId) !== generation) {
+			if (this.seekGenerations.get(sinkKey) !== generation) {
 				return sinkData.currentFrame ?? null;
 			}
 			return this.resolveFrame({ sinkData, time });
 		});
 		this.frameChain.set(
-			mediaId,
+			sinkKey,
 			current.catch(() => {}),
 		);
 		return current;
@@ -233,32 +247,36 @@ export class VideoCache {
 		}
 	}
 	private async ensureSink({
+		sinkKey,
 		mediaId,
 		file,
 	}: {
+		sinkKey: string;
 		mediaId: string;
 		file: File;
 	}): Promise<void> {
-		if (this.sinks.has(mediaId)) return;
+		if (this.sinks.has(sinkKey)) return;
 
-		if (this.initPromises.has(mediaId)) {
-			await this.initPromises.get(mediaId);
+		if (this.initPromises.has(sinkKey)) {
+			await this.initPromises.get(sinkKey);
 			return;
 		}
 
-		const initPromise = this.initializeSink({ mediaId, file });
-		this.initPromises.set(mediaId, initPromise);
+		const initPromise = this.initializeSink({ sinkKey, mediaId, file });
+		this.initPromises.set(sinkKey, initPromise);
 
 		try {
 			await initPromise;
 		} finally {
-			this.initPromises.delete(mediaId);
+			this.initPromises.delete(sinkKey);
 		}
 	}
 	private async initializeSink({
+		sinkKey,
 		mediaId,
 		file,
 	}: {
+		sinkKey: string;
 		mediaId: string;
 		file: File;
 	}): Promise<void> {
@@ -283,7 +301,8 @@ export class VideoCache {
 				fit: "contain",
 			});
 
-			this.sinks.set(mediaId, {
+			this.sinks.set(sinkKey, {
+				mediaId,
 				input,
 				sink,
 				iterator: null,
@@ -300,25 +319,44 @@ export class VideoCache {
 		}
 	}
 
+	/**
+	 * Releases every decoder reading this asset. A clip that needed its own
+	 * position has a key of its own, so there can be more than one.
+	 */
 	clearVideo({ mediaId }: { mediaId: string }): void {
-		const sinkData = this.sinks.get(mediaId);
+		const keys = [...this.sinks]
+			.filter(([, sinkData]) => sinkData.mediaId === mediaId)
+			.map(([sinkKey]) => sinkKey);
+
+		for (const sinkKey of keys) {
+			this.clearSink({ sinkKey });
+		}
+
+		// The asset's own key can hold pending state with no sink built yet.
+		this.initPromises.delete(mediaId);
+		this.frameChain.delete(mediaId);
+		this.seekGenerations.delete(mediaId);
+	}
+
+	private clearSink({ sinkKey }: { sinkKey: string }): void {
+		const sinkData = this.sinks.get(sinkKey);
 		if (sinkData) {
 			if (sinkData.iterator) {
 				void sinkData.iterator.return();
 			}
 
 			sinkData.input.dispose();
-			this.sinks.delete(mediaId);
+			this.sinks.delete(sinkKey);
 		}
 
-		this.initPromises.delete(mediaId);
-		this.frameChain.delete(mediaId);
-		this.seekGenerations.delete(mediaId);
+		this.initPromises.delete(sinkKey);
+		this.frameChain.delete(sinkKey);
+		this.seekGenerations.delete(sinkKey);
 	}
 
 	clearAll(): void {
-		for (const [mediaId] of this.sinks) {
-			this.clearVideo({ mediaId });
+		for (const sinkKey of [...this.sinks.keys()]) {
+			this.clearSink({ sinkKey });
 		}
 	}
 

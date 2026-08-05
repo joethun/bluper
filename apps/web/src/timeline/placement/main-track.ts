@@ -3,7 +3,7 @@ import { type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 
 export const MAIN_TRACK_NAME = "Main Track";
 
-export function getEarliestMainTrackElement({
+function getEarliestMainTrackElement({
 	mainTrack,
 	excludeElementId,
 }: {

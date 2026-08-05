@@ -1,4 +1,5 @@
 import type {
+	AdjustmentTrack,
 	AudioTrack,
 	EffectTrack,
 	GraphicTrack,
@@ -6,7 +7,6 @@ import type {
 	SceneTracks,
 	TextTrack,
 	TimelineElement,
-	TimelineTrack,
 	VideoTrack,
 } from "@/timeline";
 import { generateUUID } from "@/utils/id";
@@ -153,6 +153,11 @@ function buildPlacedOverlayTrack({
 			return {
 				...buildEmptyTrack({ id, type: "effect" }),
 				elements: elements as EffectTrack["elements"],
+			};
+		case "adjustment":
+			return {
+				...buildEmptyTrack({ id, type: "adjustment" }),
+				elements: elements as AdjustmentTrack["elements"],
 			};
 	}
 }

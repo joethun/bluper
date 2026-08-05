@@ -64,7 +64,7 @@ export function getEditableScalarChannels({
 	return { easingMode: getEasingModeForChannelData({ data }), channels };
 }
 
-export function getEditableScalarChannel({
+function getEditableScalarChannel({
 	animations,
 	propertyPath,
 	componentKey,

@@ -1,6 +1,6 @@
 import type { MediaTime } from "@/wasm";
 
-export type SnapPointType =
+type SnapPointType =
 	| "element-start"
 	| "element-end"
 	| "playhead"

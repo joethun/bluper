@@ -122,10 +122,11 @@ function buildResizeUpdate({
 	side: ResizeSide;
 	deltaTime: MediaTime;
 }): GroupResizeUpdate {
-	const sourceDelta = getSourceDeltaForClipDelta({
-		member,
-		clipDelta: deltaTime,
-	});
+	// Dragging a still's edge changes how long the frame is held, never which
+	// frame it is, so its trims stay exactly where the freeze put them.
+	const sourceDelta = member.isFrozen
+		? ZERO_MEDIA_TIME
+		: getSourceDeltaForClipDelta({ member, clipDelta: deltaTime });
 
 	if (side === "left") {
 		return {
@@ -175,7 +176,7 @@ function getMinimumAllowedDeltaTime({
 		member.leftNeighborBound !== null
 			? subMediaTime({ a: member.leftNeighborBound, b: member.startTime })
 			: subMediaTime({ a: ZERO_MEDIA_TIME, b: member.startTime });
-	if (member.sourceDuration == null) {
+	if (member.isFrozen || member.sourceDuration == null) {
 		return leftNeighborFloor;
 	}
 
@@ -218,7 +219,7 @@ function getMaximumAllowedDeltaTime({
 					a: member.rightNeighborBound,
 					b: addMediaTime({ a: member.startTime, b: member.duration }),
 				});
-	if (member.sourceDuration == null) {
+	if (member.isFrozen || member.sourceDuration == null) {
 		return rightNeighborCeiling;
 	}
 

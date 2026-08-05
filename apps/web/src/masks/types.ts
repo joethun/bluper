@@ -8,7 +8,7 @@ import type {
 	TextFontWeight,
 } from "@/text/primitives";
 
-export type BuiltinMaskType =
+type BuiltinMaskType =
 	| "split"
 	| "cinematic-bars"
 	| "rectangle"
@@ -67,43 +67,43 @@ export interface FreeformPathMaskParams extends BaseMaskParams {
 	scale: number;
 }
 
-export interface SplitMask {
+interface SplitMask {
 	id: string;
 	type: "split";
 	params: SplitMaskParams;
 }
 
-export interface CinematicBarsMask {
+interface CinematicBarsMask {
 	id: string;
 	type: "cinematic-bars";
 	params: RectangleMaskParams;
 }
 
-export interface RectangleMask {
+interface RectangleMask {
 	id: string;
 	type: "rectangle";
 	params: RectangleMaskParams;
 }
 
-export interface EllipseMask {
+interface EllipseMask {
 	id: string;
 	type: "ellipse";
 	params: RectangleMaskParams;
 }
 
-export interface HeartMask {
+interface HeartMask {
 	id: string;
 	type: "heart";
 	params: RectangleMaskParams;
 }
 
-export interface DiamondMask {
+interface DiamondMask {
 	id: string;
 	type: "diamond";
 	params: RectangleMaskParams;
 }
 
-export interface StarMask {
+interface StarMask {
 	id: string;
 	type: "star";
 	params: RectangleMaskParams;
@@ -115,7 +115,7 @@ export interface TextMask {
 	params: TextMaskParams;
 }
 
-export type BuiltinShapeMask =
+type BuiltinShapeMask =
 	| SplitMask
 	| CinematicBarsMask
 	| RectangleMask
@@ -133,9 +133,8 @@ export interface FreeformPathMask {
 
 export type Mask = BuiltinShapeMask | FreeformPathMask;
 
-export type MaskByType<TType extends MaskType> = Extract<Mask, { type: TType }>;
-export type MaskParamsByType<TType extends MaskType> =
-	MaskByType<TType>["params"];
+type MaskByType<TType extends MaskType> = Extract<Mask, { type: TType }>;
+type MaskParamsByType<TType extends MaskType> = MaskByType<TType>["params"];
 
 type MaskPathArgs<TParams extends BaseMaskParams> = {
 	resolvedParams: TParams;
@@ -147,7 +146,7 @@ type MaskDrawArgs<TParams extends BaseMaskParams> = MaskPathArgs<TParams> & {
 	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 };
 
-export type MaskBody<TParams extends BaseMaskParams = BaseMaskParams> =
+type MaskBody<TParams extends BaseMaskParams = BaseMaskParams> =
 	| {
 			kind: "fillPath";
 			buildPath(args: MaskPathArgs<TParams>): Path2D;
@@ -164,7 +163,7 @@ export type MaskBody<TParams extends BaseMaskParams = BaseMaskParams> =
 			};
 	  };
 
-export type MaskStroke<TParams extends BaseMaskParams = BaseMaskParams> =
+type MaskStroke<TParams extends BaseMaskParams = BaseMaskParams> =
 	| {
 			kind: "strokeFromPath";
 			buildStrokePath(args: MaskPathArgs<TParams>): Path2D;
@@ -185,9 +184,9 @@ export interface MaskFeatures {
 	sizeMode: "none" | "uniform" | "width-height" | "height-only" | "width-only";
 }
 
-export type MaskHandleIcon = "rotate" | "feather";
+type MaskHandleIcon = "rotate" | "feather";
 
-export type MaskHandleKind = "corner" | "edge" | "icon" | "point";
+type MaskHandleKind = "corner" | "edge" | "icon" | "point";
 
 type Side = "left" | "right" | "top" | "bottom";
 type CornerXY = { x: "left" | "right"; y: "top" | "bottom" };
@@ -265,7 +264,7 @@ export interface MaskShapeOverlay {
 	handleId?: MaskHandleId;
 }
 
-export interface MaskCanvasPathOverlay {
+interface MaskCanvasPathOverlay {
 	id: string;
 	type: "canvas-path";
 	pathData: string;

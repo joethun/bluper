@@ -57,13 +57,6 @@ interface LegacyVectorValue {
 	y: number;
 }
 
-interface LegacyVectorKeyframe {
-	id: string;
-	time: number;
-	value: LegacyVectorValue;
-	interpolation: LegacyInterpolation;
-}
-
 interface MigratedAnimationChannel {
 	binding: ProjectRecord;
 	channels: Record<string, ProjectRecord>;

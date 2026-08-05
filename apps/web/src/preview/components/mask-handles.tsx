@@ -17,7 +17,7 @@ import {
 } from "./handle-primitives";
 
 const CUSTOM_MASK_ANCHOR_SIZE = 7;
-import { Rotate01Icon, FeatherIcon } from "@hugeicons/core-free-icons";
+import { FeatherIcon, RotateCwIcon } from "lucide-react";
 
 export function MaskHandles({
 	onSnapLinesChange,
@@ -199,7 +199,7 @@ export function MaskHandles({
 					return (
 						<IconHandle
 							key={key}
-							icon={Rotate01Icon}
+							icon={RotateCwIcon}
 							screen={screen}
 							onPointerDown={(event) =>
 								handleMaskPointerDown({ event, handleId: handle.id })

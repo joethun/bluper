@@ -34,7 +34,7 @@ export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {
 	updatedAt: string;
 };
 
-export type SerializedProjectMetadata = Omit<
+type SerializedProjectMetadata = Omit<
 	TProjectMetadata,
 	"createdAt" | "updatedAt"
 > & {
@@ -51,7 +51,6 @@ export type SerializedProject = Omit<TProject, "metadata" | "scenes"> & {
 export interface StorageConfig {
 	projectsDb: string;
 	mediaDb: string;
-	savedSoundsDb: string;
 	version: number;
 }
 

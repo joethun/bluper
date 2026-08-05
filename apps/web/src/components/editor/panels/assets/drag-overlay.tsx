@@ -1,5 +1,4 @@
-import { HugeiconsIcon } from "@hugeicons/react";
-import { UploadIcon } from "@hugeicons/core-free-icons";
+import { UploadIcon } from "lucide-react";
 
 interface MediaDragOverlayProps {
 	isVisible: boolean;
@@ -29,28 +28,29 @@ export function MediaDragOverlay({
 
 	return (
 		<button
-			className="bg-foreground/5 hover:bg-foreground/10 flex flex-col items-center justify-center gap-4 rounded-lg p-8 text-center"
+			className="bg-foreground/5 hover:bg-foreground/10 border-border flex size-full flex-col items-center justify-center gap-3 rounded-md border border-dashed p-8 text-center transition-colors"
 			type="button"
 			disabled={isProcessing || !onClick}
 			onClick={(event) => handleClick({ event })}
 		>
-			<div className="flex items-center justify-center">
-				<HugeiconsIcon icon={UploadIcon} className="text-foreground size-10" />
-			</div>
+			<UploadIcon className="text-muted-foreground size-8" />
 
-			<div className="space-y-2">
+			<div className="space-y-1">
+				<p className="text-foreground text-sm font-medium">
+					{isProcessing ? "Processing your files" : "Drag and drop media"}
+				</p>
 				<p className="text-muted-foreground max-w-sm text-xs">
 					{isProcessing
-						? `Processing your files (${progress}%)`
-						: "Drag and drop videos, photos, and audio files here"}
+						? `${progress}% complete`
+						: "Videos, photos and audio — or click to browse"}
 				</p>
 			</div>
 
 			{isProcessing && (
 				<div className="w-full max-w-xs">
-					<div className="bg-muted/50 h-2 w-full rounded-full">
+					<div className="bg-muted/50 h-2 w-full overflow-hidden rounded-full">
 						<div
-							className="bg-primary h-2 rounded-full"
+							className="bg-primary h-2 rounded-full transition-[width] duration-200 ease-out"
 							style={{ width: `${progress}%` }}
 						/>
 					</div>

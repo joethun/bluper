@@ -53,11 +53,11 @@ export interface ResolvedTextBackgroundLike {
 	cornerRadius: number;
 }
 
-export function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
+function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
 	return `"${fontFamily.replace(/"/g, '\\"')}"`;
 }
 
-export function buildTextFontString({
+function buildTextFontString({
 	fontFamily,
 	fontWeight,
 	fontStyle,

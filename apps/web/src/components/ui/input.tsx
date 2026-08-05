@@ -1,6 +1,6 @@
 "use client";
 
-import { Eye, EyeOff, X } from "lucide-react";
+import { EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/utils/ui";
 import { Button } from "./button";
@@ -113,7 +113,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
 						className="text-muted-foreground absolute top-0 right-0 h-full px-3 !opacity-100"
 						aria-label="Clear input"
 					>
-						<X className="!size-[0.85]" />
+						<XIcon className="!size-[0.85]" />
 					</Button>
 				)}
 				{showPasswordToggle && (
@@ -128,9 +128,9 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
 						aria-label={showPassword ? "Hide password" : "Show password"}
 					>
 						{showPassword ? (
-							<Eye className="size-4" />
+							<EyeIcon className="size-4" />
 						) : (
-							<EyeOff className="size-4" />
+							<EyeOffIcon className="size-4" />
 						)}
 					</Button>
 				)}

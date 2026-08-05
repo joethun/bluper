@@ -1,7 +1,6 @@
 import {
 	masksRegistry,
 	type MaskDefinitionForRegistration,
-	type MaskIconProps,
 } from "../../registry";
 import { cinematicBarsMaskDefinition } from "./cinematic-bars";
 import { diamondMaskDefinition } from "./diamond";
@@ -13,23 +12,24 @@ import { starMaskDefinition } from "./star";
 import { textMaskDefinition } from "./text";
 import { freeformMaskDefinition } from "../../freeform/definition";
 import {
-	MinusSignIcon,
-	PanelRightDashedIcon,
-	SquareIcon,
 	CircleIcon,
-	FavouriteIcon,
 	DiamondIcon,
-	StarsIcon,
-	TextFontIcon,
-	PenToolAddIcon,
-} from "@hugeicons/core-free-icons";
+	HeartIcon,
+	type LucideIcon,
+	MinusIcon,
+	PanelRightIcon,
+	PenToolIcon,
+	SparklesIcon,
+	SquareIcon,
+	TypeIcon,
+} from "lucide-react";
 
 function registerDefaultMask({
 	definition,
 	icon,
 }: {
 	definition: MaskDefinitionForRegistration;
-	icon: MaskIconProps;
+	icon: LucideIcon;
 }) {
 	if (masksRegistry.has(definition.type)) {
 		return;
@@ -41,38 +41,38 @@ function registerDefaultMask({
 export function registerDefaultMasks(): void {
 	registerDefaultMask({
 		definition: splitMaskDefinition,
-		icon: { icon: PanelRightDashedIcon, strokeWidth: 1 },
+		icon: PanelRightIcon,
 	});
 	registerDefaultMask({
 		definition: cinematicBarsMaskDefinition,
-		icon: { icon: MinusSignIcon },
+		icon: MinusIcon,
 	});
 	registerDefaultMask({
 		definition: rectangleMaskDefinition,
-		icon: { icon: SquareIcon },
+		icon: SquareIcon,
 	});
 	registerDefaultMask({
 		definition: ellipseMaskDefinition,
-		icon: { icon: CircleIcon },
+		icon: CircleIcon,
 	});
 	registerDefaultMask({
 		definition: heartMaskDefinition,
-		icon: { icon: FavouriteIcon },
+		icon: HeartIcon,
 	});
 	registerDefaultMask({
 		definition: diamondMaskDefinition,
-		icon: { icon: DiamondIcon },
+		icon: DiamondIcon,
 	});
 	registerDefaultMask({
 		definition: starMaskDefinition,
-		icon: { icon: StarsIcon },
+		icon: SparklesIcon,
 	});
 	registerDefaultMask({
 		definition: textMaskDefinition,
-		icon: { icon: TextFontIcon },
+		icon: TypeIcon,
 	});
 	registerDefaultMask({
 		definition: freeformMaskDefinition,
-		icon: { icon: PenToolAddIcon },
+		icon: PenToolIcon,
 	});
 }

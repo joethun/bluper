@@ -45,10 +45,10 @@ import { mediaSupportsAudio } from "@/media/media-utils";
 import {
 	canToggleSourceAudio,
 	getSourceAudioActionLabel,
-	isSourceAudioSeparated,
 } from "@/timeline/audio-separation";
 import { buildWaveformGainSamples, isElementMuted } from "@/timeline/audio-state";
 import { getTimelinePixelsPerSecond } from "@/timeline";
+import { canFreezeElementAtTime, isFrozenElement } from "@/freeze";
 import { buildWaveformSourceKey } from "@/media/waveform-summary";
 import { addMediaTime, type MediaTime, TICKS_PER_SECOND } from "@/wasm";
 import {
@@ -61,23 +61,19 @@ import { useElementSelection } from "@/timeline/hooks/element/use-element-select
 import { resolveStickerId } from "@/stickers";
 import { buildGraphicPreviewUrl } from "@/graphics";
 import Image from "next/image";
-import {
-	ScissorIcon,
-	Delete02Icon,
-	Copy01Icon,
-	ViewIcon,
-	ViewOffSlashIcon,
-	VolumeHighIcon,
-	VolumeOffIcon,
-	VolumeMute02Icon,
-	Search01Icon,
-	Exchange01Icon,
-	KeyframeIcon,
-	MagicWand05Icon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { ArrowRightLeftIcon, CopyIcon, DiamondIcon, EyeIcon, EyeOffIcon, ScissorsIcon, SearchIcon, SnowflakeIcon, Trash2Icon, Volume2Icon, VolumeOffIcon, VolumeXIcon, WandSparklesIcon } from "lucide-react";
 import { uppercase } from "@/utils/string";
-import { useMemo, type ComponentProps, type ReactNode } from "react";
+import {
+	useCallback,
+	useEffect,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	type ComponentProps,
+	type ReactNode,
+} from "react";
+import { useResizeObserver } from "@/hooks/use-resize-observer";
+import { findScrollParent } from "@/utils/browser";
 import type { SelectedKeyframeRef, ElementKeyframe } from "@/animation/types";
 import { cn } from "@/utils/ui";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
@@ -102,7 +98,7 @@ interface KeyframeIndicator {
 	keyframes: SelectedKeyframeRef[];
 }
 
-export function buildKeyframeIndicator({
+function buildKeyframeIndicator({
 	keyframe,
 	trackId,
 	elementId,
@@ -138,7 +134,7 @@ export function buildKeyframeIndicator({
 	};
 }
 
-export function getKeyframeIndicators({
+function getKeyframeIndicators({
 	keyframes,
 	trackId,
 	elementId,
@@ -185,7 +181,7 @@ export function getKeyframeIndicators({
 	return [...keyframesByTime.values()].sort((a, b) => a.time - b.time);
 }
 
-export function getDisplayShortcut({ action }: { action: TAction }) {
+function getDisplayShortcut({ action }: { action: TAction }) {
 	const defaultShortcuts = getActionDefinition({ action }).defaultShortcuts;
 	if (!defaultShortcuts?.length) {
 		return "";
@@ -230,6 +226,7 @@ export function TimelineElement({
 	dragView,
 	isDropTarget = false,
 }: TimelineElementProps) {
+	const editor = useEditor();
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
 	const requestRevealMedia = useAssetsPanelStore((s) => s.requestRevealMedia);
@@ -335,6 +332,10 @@ export function TimelineElement({
 		}
 	};
 
+	const canFreezeAtPlayhead = useEditor((e) =>
+		canFreezeElementAtTime({ element, time: e.playback.getCurrentTime() }),
+	);
+
 	const isMuted = canElementHaveAudio(element) && isElementMuted({ element });
 	const canToggleCurrentSourceAudio =
 		selectedElements.length === 1 &&
@@ -344,8 +345,6 @@ export function TimelineElement({
 		element.type === "video"
 			? getSourceAudioActionLabel({ element })
 			: "Extract audio";
-	const isElementSourceAudioSeparated =
-		element.type === "video" && isSourceAudioSeparated({ element });
 	const hasKeyframes = elementKeyframes.length > 0;
 	const expansionHeight = getExpansionHeight({ rows: expandedRows });
 	const baseTrackHeight = getTrackHeight({ type: track.type });
@@ -425,15 +424,33 @@ export function TimelineElement({
 				<ContextMenuContent className="w-64">
 					<ActionMenuItem
 						action="split"
-						icon={<HugeiconsIcon icon={ScissorIcon} />}
+						icon={<ScissorsIcon />}
 					>
 						Split
 					</ActionMenuItem>
+					{canFreezeAtPlayhead && (
+						<ContextMenuItem
+							icon={<SnowflakeIcon />}
+							textRight={getDisplayShortcut({ action: "freeze-frame" })}
+							onClick={(event: React.MouseEvent) => {
+								event.stopPropagation();
+								// Freeze the clip that was right-clicked, not whatever the
+								// playhead-and-selection heuristic would have picked.
+								void editor.timeline.freezeFrame({
+									trackId: track.id,
+									elementId: element.id,
+									freezeTime: editor.playback.getCurrentTime(),
+								});
+							}}
+						>
+							Freeze frame
+						</ContextMenuItem>
+					)}
 					<CopyMenuItem />
 					{selectedElements.length === 1 && (
 						<ActionMenuItem
 							action="duplicate-selected"
-							icon={<HugeiconsIcon icon={Copy01Icon} />}
+							icon={<CopyIcon />}
 						>
 							Duplicate
 						</ActionMenuItem>
@@ -447,13 +464,7 @@ export function TimelineElement({
 					)}
 					{canToggleCurrentSourceAudio && (
 						<ContextMenuItem
-							icon={
-								<HugeiconsIcon
-									icon={
-										isElementSourceAudioSeparated ? ScissorIcon : ScissorIcon
-									}
-								/>
-							}
+							icon={<ScissorsIcon />}
 							onClick={(event: React.MouseEvent) => {
 								event.stopPropagation();
 								invokeAction("toggle-source-audio");
@@ -471,7 +482,7 @@ export function TimelineElement({
 					)}
 					{hasKeyframes && (
 						<ContextMenuItem
-							icon={<HugeiconsIcon icon={KeyframeIcon} />}
+							icon={<DiamondIcon />}
 							onClick={(event: React.MouseEvent) => {
 								event.stopPropagation();
 								toggleElementExpanded(element.id);
@@ -483,7 +494,7 @@ export function TimelineElement({
 					{selectedElements.length === 1 && hasMediaId(element) && (
 						<>
 							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Search01Icon} />}
+								icon={<SearchIcon />}
 								onClick={(event: React.MouseEvent) =>
 									handleRevealInMedia({ event })
 								}
@@ -491,7 +502,7 @@ export function TimelineElement({
 								Reveal media
 							</ContextMenuItem>
 							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Exchange01Icon} />}
+								icon={<ArrowRightLeftIcon />}
 								disabled
 							>
 								Replace media
@@ -724,13 +735,11 @@ function KeyframeIndicators({
 				}
 				aria-label="Select keyframe"
 			>
-				<HugeiconsIcon
-					icon={KeyframeIcon}
+				<DiamondIcon
 					className={cn(
 						"size-3.5 text-black",
 						isIndicatorSelected ? "fill-primary" : "fill-white",
 					)}
-					strokeWidth={1.5}
 				/>
 			</button>
 		);
@@ -877,13 +886,11 @@ function ExpandedKeyframeLanes({
 									}}
 									aria-label="Select keyframe"
 								>
-									<HugeiconsIcon
-										icon={KeyframeIcon}
+									<DiamondIcon
 										className={cn(
 											"size-3.5 text-black mr-1",
 											isSelected ? "fill-primary" : "fill-white",
 										)}
-										strokeWidth={1.5}
 									/>
 								</button>
 							);
@@ -922,8 +929,7 @@ function EffectElementContent({
 }) {
 	return (
 		<div className="flex size-full items-center justify-start gap-1 pl-2">
-			<HugeiconsIcon
-				icon={MagicWand05Icon}
+			<WandSparklesIcon
 				className="size-4 shrink-0 text-white"
 			/>
 			<span className="truncate text-xs text-white">{element.name}</span>
@@ -1076,7 +1082,7 @@ function EffectsButton({
 			onMouseDown={(event) => event.stopPropagation()}
 			onClick={handleClick}
 		>
-			<HugeiconsIcon icon={MagicWand05Icon} size={12} />
+			<WandSparklesIcon className="size-3" />
 		</button>
 	);
 }
@@ -1106,25 +1112,27 @@ function TiledMediaContent({
 
 	const trackHeight = getTrackHeight({ type: track.type });
 	const tileWidth = trackHeight * THUMBNAIL_ASPECT_RATIO;
-
+	// A still is otherwise indistinguishable from the clip it was cut out of —
+	// same filmstrip, same media name.
+	const isFrozen = isFrozenElement({ element });
+	const hasEffects = hasElementEffects({ element });
 	return (
 		<>
-			<div
-				className="absolute inset-0"
-				style={{
-					backgroundColor: "var(--muted)",
-					backgroundImage: `url(${imageUrl})`,
-					backgroundRepeat: "repeat-x",
-					backgroundSize: `${tileWidth}px ${trackHeight}px`,
-					backgroundPosition: "left center",
-					pointerEvents: "none",
-				}}
+			<TiledFilmstrip
+				imageUrl={imageUrl}
+				tileWidth={tileWidth}
+				trackHeight={trackHeight}
 			/>
 			<MediaElementHeader
 				name={mediaAsset?.name}
 				leading={
-					hasElementEffects({ element }) ? (
-						<EffectsButton element={element} track={track} />
+					isFrozen || hasEffects ? (
+						<div className="flex items-center gap-1">
+							{isFrozen && (
+								<SnowflakeIcon className="size-3 shrink-0 text-white/75" />
+							)}
+							{hasEffects && <EffectsButton element={element} track={track} />}
+						</div>
 					) : null
 				}
 				hasFade={true}
@@ -1133,16 +1141,136 @@ function TiledMediaContent({
 	);
 }
 
+/**
+ * Paints the repeating thumbnail strip across only the on-screen slice of the
+ * clip instead of its full width.
+ *
+ * A 40-minute clip is ~1M px wide at 75% zoom and ~4.6M at 90%, and an
+ * image-tile fill is the priciest kind of paint on the timeline. Filling the
+ * whole clip means the browser carries a fill that large and re-rasters it
+ * every time zoom changes the width — which is every frame of a zoom gesture.
+ *
+ * Renders identically to filling the whole element: the tiling is periodic, so
+ * offsetting `background-position` by the slice start lands every tile in the
+ * same place. Updates imperatively off scroll/resize — going through React
+ * state here would re-render every clip on the timeline on every scroll frame.
+ */
+function TiledFilmstrip({
+	imageUrl,
+	tileWidth,
+	trackHeight,
+}: {
+	imageUrl: string;
+	tileWidth: number;
+	trackHeight: number;
+}) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	const stripRef = useRef<HTMLDivElement>(null);
+	const scrollParentRef = useRef<HTMLElement | null>(null);
+	const frameRef = useRef<number | null>(null);
+
+	const applySlice = useCallback(() => {
+		const container = containerRef.current;
+		const strip = stripRef.current;
+		if (!container || !strip) return;
+
+		const rect = container.getBoundingClientRect();
+		if (rect.width <= 0) {
+			strip.style.width = "0px";
+			return;
+		}
+
+		const scrollParent = scrollParentRef.current;
+		const viewportLeft = scrollParent
+			? scrollParent.getBoundingClientRect().left
+			: 0;
+		const viewportRight = scrollParent
+			? scrollParent.getBoundingClientRect().right
+			: window.innerWidth;
+
+		const sliceLeft = Math.max(0, viewportLeft - rect.left);
+		const sliceRight = Math.min(rect.width, viewportRight - rect.left);
+		const sliceWidth = Math.max(0, sliceRight - sliceLeft);
+
+		strip.style.left = `${sliceLeft}px`;
+		strip.style.width = `${sliceWidth}px`;
+		// Keep tiles phase-aligned with the clip's true origin.
+		strip.style.backgroundPosition = `${-(sliceLeft % tileWidth)}px center`;
+	}, [tileWidth]);
+
+	const scheduleApply = useCallback(() => {
+		if (frameRef.current !== null) return;
+		frameRef.current = requestAnimationFrame(() => {
+			frameRef.current = null;
+			applySlice();
+		});
+	}, [applySlice]);
+
+	useLayoutEffect(() => {
+		applySlice();
+	}, [applySlice, trackHeight]);
+
+	useEffect(() => {
+		const container = containerRef.current;
+		if (!container) return;
+
+		scrollParentRef.current = findScrollParent({ element: container });
+		const scrollParent = scrollParentRef.current;
+		if (!scrollParent) return;
+
+		scrollParent.addEventListener("scroll", scheduleApply, { passive: true });
+		return () => scrollParent.removeEventListener("scroll", scheduleApply);
+	}, [scheduleApply]);
+
+	const onResize = useCallback(() => {
+		scheduleApply();
+	}, [scheduleApply]);
+
+	useResizeObserver({ ref: containerRef, onResize });
+
+	useEffect(
+		() => () => {
+			if (frameRef.current !== null) {
+				cancelAnimationFrame(frameRef.current);
+				frameRef.current = null;
+			}
+		},
+		[],
+	);
+
+	return (
+		<div
+			ref={containerRef}
+			className="absolute inset-0"
+			style={{ backgroundColor: "var(--muted)", pointerEvents: "none" }}
+		>
+			<div
+				ref={stripRef}
+				className="absolute top-0 bottom-0"
+				style={{
+					backgroundImage: `url(${imageUrl})`,
+					backgroundRepeat: "repeat-x",
+					backgroundSize: `${tileWidth}px ${trackHeight}px`,
+					backgroundPosition: "left center",
+					pointerEvents: "none",
+				}}
+			/>
+		</div>
+	);
+}
+
 function MediaElementHeader({
 	name,
 	leading,
+	trailing,
 	hasFade,
 }: {
 	name?: string | null;
 	leading?: ReactNode;
+	trailing?: ReactNode;
 	hasFade?: boolean;
 }) {
-	if (!name && !leading) {
+	if (!name && !leading && !trailing) {
 		return null;
 	}
 
@@ -1153,12 +1281,13 @@ function MediaElementHeader({
 				hasFade && "from-black/30 to-transparent",
 			)}
 		>
-			{leading && <div className="pl-1">{leading}</div>}
+			{leading && <div className="shrink-0 pl-1">{leading}</div>}
 			{name && (
 				<span className="truncate px-1.5 text-[0.6rem] leading-tight text-white/75">
 					{name}
 				</span>
 			)}
+			{trailing && <div className="ml-auto shrink-0 pr-1">{trailing}</div>}
 		</div>
 	);
 }
@@ -1185,7 +1314,7 @@ function CopyMenuItem() {
 	return (
 		<ActionMenuItem
 			action="copy-selected"
-			icon={<HugeiconsIcon icon={Copy01Icon} />}
+			icon={<CopyIcon />}
 		>
 			Copy
 		</ActionMenuItem>
@@ -1203,12 +1332,12 @@ function MuteMenuItem({
 }) {
 	const getIcon = () => {
 		if (isMultipleSelected && isCurrentElementSelected) {
-			return <HugeiconsIcon icon={VolumeMute02Icon} />;
+			return <VolumeXIcon />;
 		}
 		return isMuted ? (
-			<HugeiconsIcon icon={VolumeOffIcon} />
+			<VolumeOffIcon />
 		) : (
-			<HugeiconsIcon icon={VolumeHighIcon} />
+			<Volume2Icon />
 		);
 	};
 
@@ -1232,12 +1361,12 @@ function VisibilityMenuItem({
 
 	const getIcon = () => {
 		if (isMultipleSelected && isCurrentElementSelected) {
-			return <HugeiconsIcon icon={ViewOffSlashIcon} />;
+			return <EyeOffIcon />;
 		}
 		return isHidden ? (
-			<HugeiconsIcon icon={ViewIcon} />
+			<EyeIcon />
 		) : (
-			<HugeiconsIcon icon={ViewOffSlashIcon} />
+			<EyeOffIcon />
 		);
 	};
 
@@ -1266,7 +1395,7 @@ function DeleteMenuItem({
 		<ActionMenuItem
 			action="delete-selected"
 			variant="destructive"
-			icon={<HugeiconsIcon icon={Delete02Icon} />}
+			icon={<Trash2Icon />}
 		>
 			{isMultipleSelected && isCurrentElementSelected
 				? `Delete ${selectedCount} elements`

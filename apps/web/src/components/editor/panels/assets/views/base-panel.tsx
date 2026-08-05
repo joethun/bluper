@@ -1,3 +1,4 @@
+import { PanelHeader } from "@/components/editor/panels/panel-header";
 import { cn } from "@/utils/ui";
 
 interface PanelViewProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -31,17 +32,16 @@ export function PanelView({
 			ref={ref}
 			{...rest}
 		>
-			{!hideHeader && (
-				<div className="bg-background h-11 shrink-0 pl-3 pr-2 flex items-center justify-between border-b">
-					{title && (
-						<span className="text-muted-foreground text-sm">{title}</span>
-					)}
-					{actions}
-				</div>
-			)}
+			{!hideHeader && <PanelHeader title={title}>{actions}</PanelHeader>}
+			{/*
+			 * The scroll box is a flex column so the content wrapper's flex-1 has
+			 * something to grow against. Without it the wrapper is height:auto, and
+			 * any child asking for h-full (PanelEmptyState) collapses to its own
+			 * content height and pins itself to the top of the panel.
+			 */}
 			<div
 				className={cn(
-					"scrollbar-hidden size-full overflow-y-auto",
+					"scrollbar-hidden flex size-full flex-col overflow-y-auto",
 					hideHeader ? "pt-4" : "pt-2",
 					scrollClassName,
 				)}

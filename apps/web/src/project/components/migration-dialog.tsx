@@ -8,7 +8,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { useEditor } from "@/editor/use-editor";
-import { Loader2 } from "lucide-react";
+import { Loader2Icon } from "lucide-react";
 
 export function MigrationDialog() {
 	const editor = useEditor();
@@ -36,7 +36,7 @@ export function MigrationDialog() {
 				</DialogHeader>
 
 				<div className="flex items-center justify-center py-4">
-					<Loader2 className="text-muted-foreground size-8 animate-spin" />
+					<Loader2Icon className="text-muted-foreground size-8 animate-spin" />
 				</div>
 			</DialogContent>
 		</Dialog>

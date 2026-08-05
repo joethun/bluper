@@ -4,9 +4,9 @@ import { clamp, snapToStep } from "@/utils/math";
 export type ParamValue = number | string | boolean;
 export type ParamValues = Record<string, ParamValue>;
 
-export type ParamGroup = "stroke";
+type ParamGroup = "stroke";
 
-export type ChannelValueKind = "scalar" | "discrete";
+type ChannelValueKind = "scalar" | "discrete";
 export type ChannelEasingMode = "independent" | "shared";
 
 export interface LinearRgba {
@@ -22,7 +22,7 @@ export interface ChannelComponentDefinition<TKey extends string = string> {
 	defaultInterpolation: "linear" | "hold";
 }
 
-export interface LeafChannelLayout<TValue extends ParamValue = ParamValue> {
+interface LeafChannelLayout<TValue extends ParamValue = ParamValue> {
 	kind: "leaf";
 	component: ChannelComponentDefinition<"value">;
 	easingMode: "independent";
@@ -30,7 +30,7 @@ export interface LeafChannelLayout<TValue extends ParamValue = ParamValue> {
 	compose: (components: { value?: TValue }) => TValue | null;
 }
 
-export interface CompositeChannelLayout<
+interface CompositeChannelLayout<
 	TValue extends ParamValue = ParamValue,
 	TComponents extends object = Record<string, ParamValue>,
 > {
@@ -41,7 +41,7 @@ export interface CompositeChannelLayout<
 	compose: (components: Partial<TComponents>) => TValue | null;
 }
 
-export type ChannelLayout<
+type ChannelLayout<
 	TValue extends ParamValue = ParamValue,
 	TComponents extends object = Record<string, ParamValue>,
 > = LeafChannelLayout<TValue> | CompositeChannelLayout<TValue, TComponents>;
@@ -127,19 +127,19 @@ function createLeafChannelLayout<TValue extends ParamValue>({
 	};
 }
 
-export const NUMBER_CHANNEL_LAYOUT: LeafChannelLayout<number> =
+const NUMBER_CHANNEL_LAYOUT: LeafChannelLayout<number> =
 	createLeafChannelLayout<number>({
 		valueKind: "scalar",
 		defaultInterpolation: "linear",
 	});
 
-export const BOOLEAN_CHANNEL_LAYOUT: LeafChannelLayout<boolean> =
+const BOOLEAN_CHANNEL_LAYOUT: LeafChannelLayout<boolean> =
 	createLeafChannelLayout<boolean>({
 		valueKind: "discrete",
 		defaultInterpolation: "hold",
 	});
 
-export const STRING_CHANNEL_LAYOUT: LeafChannelLayout<string> =
+const STRING_CHANNEL_LAYOUT: LeafChannelLayout<string> =
 	createLeafChannelLayout<string>({
 		valueKind: "discrete",
 		defaultInterpolation: "hold",
@@ -153,7 +153,7 @@ const colorComponent = (
 	defaultInterpolation: "linear",
 });
 
-export const COLOR_CHANNEL_LAYOUT: CompositeChannelLayout<string, LinearRgba> = {
+const COLOR_CHANNEL_LAYOUT: CompositeChannelLayout<string, LinearRgba> = {
 	kind: "composite",
 	components: [
 		colorComponent("r"),
@@ -192,8 +192,22 @@ export interface NumberParamDefinition<TKey extends string = string>
 	displayMultiplier?: number;
 	/** Show as percentage of max. min/max/step/default stay in stored space. */
 	unit?: "percent";
+	/** Unit rendered after the value in the number field (e.g. "dB"). Display only. */
+	suffix?: string;
 	/** Short label shown as the scrub handle icon in the number field (e.g. "W", "R"). */
 	shortLabel?: string;
+	/**
+	 * Render as a full-width track slider instead of the scrub field. For params
+	 * judged by eye against the picture — exposure, saturation — where the useful
+	 * gesture is a sweep rather than a typed number.
+	 */
+	control?: "slider";
+	/**
+	 * CSS background for a slider's track, e.g. a blue-to-orange temperature ramp,
+	 * so the track itself says which way the slider pushes the picture. Display
+	 * only, and only read when `control` is `"slider"`.
+	 */
+	trackGradient?: string;
 }
 
 export interface BooleanParamDefinition<TKey extends string = string>
@@ -203,11 +217,17 @@ export interface BooleanParamDefinition<TKey extends string = string>
 	channels?: LeafChannelLayout<boolean>;
 }
 
-export interface ColorParamDefinition<TKey extends string = string>
+interface ColorParamDefinition<TKey extends string = string>
 	extends BaseParamDefinition<TKey> {
 	type: "color";
 	default: string;
 	channels?: ChannelLayout<string, LinearRgba>;
+	/**
+	 * Render as an eyedropper instead of the hue/saturation picker, for a colour
+	 * whose right value is one already in the picture rather than one to be mixed
+	 * by eye. A chroma key's screen colour is the case this exists for.
+	 */
+	control?: "eyedropper";
 }
 
 export interface SelectParamDefinition<TKey extends string = string>
@@ -218,14 +238,14 @@ export interface SelectParamDefinition<TKey extends string = string>
 	options: Array<{ value: string; label: string }>;
 }
 
-export interface TextParamDefinition<TKey extends string = string>
+interface TextParamDefinition<TKey extends string = string>
 	extends BaseParamDefinition<TKey> {
 	type: "text";
 	default: string;
 	channels?: LeafChannelLayout<string>;
 }
 
-export interface FontParamDefinition<TKey extends string = string>
+interface FontParamDefinition<TKey extends string = string>
 	extends BaseParamDefinition<TKey> {
 	type: "font";
 	default: string;

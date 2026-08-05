@@ -1,7 +1,6 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { cn } from "@/utils/ui";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowDownIcon } from "@hugeicons/core-free-icons";
+import { ArrowDownIcon } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
@@ -104,8 +103,7 @@ export function SectionHeader({
 	const handleClick = isCollapsible ? ctx?.toggle : onClick;
 
 	const chevronIcon = (
-		<HugeiconsIcon
-			icon={ArrowDownIcon}
+		<ArrowDownIcon
 			className={cn(
 				"size-4 shrink-0 transition-transform duration-200 ease-out",
 				isOpen

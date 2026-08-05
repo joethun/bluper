@@ -6,12 +6,7 @@ import { formatTimecode } from "opencut-wasm";
 import { invokeAction } from "@/actions";
 import { EditableTimecode } from "@/components/editable-timecode";
 import { Button } from "@/components/ui/button";
-import {
-	FullScreenIcon,
-	PauseIcon,
-	PlayIcon,
-} from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { MaximizeIcon, PauseIcon, PlayIcon } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import {
 	Select,
@@ -22,8 +17,6 @@ import {
 } from "@/components/ui/select";
 import { PREVIEW_ZOOM_PRESETS } from "@/preview/zoom";
 import { usePreviewViewport } from "./preview-viewport";
-import { GridPopover } from "./guide-popover";
-import { usePreviewStore } from "@/preview/preview-store";
 import type { MediaTime } from "@/wasm";
 
 export function PreviewToolbar({
@@ -47,12 +40,12 @@ export function PreviewToolbar({
 						{activeGuideDefinition ? (
 							activeGuideDefinition.renderTriggerIcon()
 						) : (
-							<HugeiconsIcon icon={GridTableIcon} />
+							<GridTableIcon />
 						)}
 					</Button>
 				</GridPopover> */}
 				<Button variant="text" onClick={onToggleFullscreen}>
-					<HugeiconsIcon icon={FullScreenIcon} />
+					<MaximizeIcon />
 				</Button>
 			</div>
 		</div>
@@ -140,7 +133,7 @@ function PlayPauseButton() {
 			size="icon"
 			onClick={() => invokeAction("toggle-play")}
 		>
-			<HugeiconsIcon icon={isPlaying ? PauseIcon : PlayIcon} />
+			{isPlaying ? <PauseIcon /> : <PlayIcon />}
 		</Button>
 	);
 }

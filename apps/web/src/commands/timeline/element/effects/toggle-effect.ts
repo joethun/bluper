@@ -3,7 +3,7 @@ import { EditorCore } from "@/core";
 import { isVisualElement, updateElementInSceneTracks } from "@/timeline";
 import type { SceneTracks, VisualElement } from "@/timeline";
 
-export function toggleEffectOnElement({
+function toggleEffectOnElement({
 	element,
 	effectId,
 }: {

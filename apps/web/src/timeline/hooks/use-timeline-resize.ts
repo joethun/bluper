@@ -9,11 +9,8 @@ import {
 	ResizeController,
 	type ResizeConfig,
 } from "@/timeline/controllers/resize-controller";
-import type { ResizeSide } from "@/timeline/group-resize";
 import type { SnapPoint } from "@/timeline/snapping";
 import type { TimelineElement } from "@/timeline";
-
-export type { ResizeSide };
 
 interface UseTimelineResizeProps {
 	zoomLevel: number;

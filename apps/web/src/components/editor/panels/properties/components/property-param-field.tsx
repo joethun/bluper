@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type {
 	ParamDefinition,
 	NumberParamDefinition,
@@ -12,8 +13,11 @@ import {
 } from "@/utils/math";
 import { SectionField } from "@/components/section";
 import { NumberField } from "@/components/ui/number-field";
+import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { ColorPicker } from "@/components/ui/color-picker";
+import { ColorSampler } from "@/components/ui/color-sampler";
+import { FontPicker } from "@/components/ui/font-picker";
 import {
 	Select,
 	SelectContent,
@@ -31,6 +35,7 @@ export function PropertyParamField({
 	onPreview,
 	onCommit,
 	keyframe,
+	sampleImageUrl,
 }: {
 	param: ParamDefinition;
 	value: ParamValue;
@@ -38,9 +43,15 @@ export function PropertyParamField({
 	onCommit: () => void;
 	keyframe?: {
 		isActive: boolean;
+		isAnimated: boolean;
 		isDisabled: boolean;
 		onToggle: () => void;
 	};
+	/**
+	 * A still of the layer this param belongs to, for an eyedropper param to sample
+	 * out of. Only read by `control: "eyedropper"` colour params.
+	 */
+	sampleImageUrl?: string;
 }) {
 	return (
 		<SectionField
@@ -49,8 +60,9 @@ export function PropertyParamField({
 				keyframe && param.keyframable !== false ? (
 					<KeyframeToggle
 						isActive={keyframe.isActive}
+						isAnimated={keyframe.isAnimated}
 						isDisabled={keyframe.isDisabled}
-						title={`Toggle ${param.label.toLowerCase()} keyframe`}
+						label={param.label.toLowerCase()}
 						onToggle={keyframe.onToggle}
 					/>
 				) : undefined
@@ -61,6 +73,7 @@ export function PropertyParamField({
 				value={value}
 				onPreview={onPreview}
 				onCommit={onCommit}
+				sampleImageUrl={sampleImageUrl}
 			/>
 		</SectionField>
 	);
@@ -71,17 +84,41 @@ function ParamInput({
 	value,
 	onPreview,
 	onCommit,
+	sampleImageUrl,
 }: {
 	param: ParamDefinition;
 	value: ParamValue;
 	onPreview: (value: ParamValue) => void;
 	onCommit: () => void;
+	sampleImageUrl?: string;
 }) {
 	if (param.type === "number") {
+		const numericValue = typeof value === "number" ? value : Number(value);
+		if (param.control === "slider") {
+			// The slider gives up the right-hand end of the row to the number field,
+			// which is what carries the readout and the reset affordance.
+			return (
+				<div className="flex items-center gap-2">
+					<NumberParamSlider
+						param={param}
+						value={numericValue}
+						onPreview={onPreview}
+						onCommit={onCommit}
+					/>
+					<NumberParamField
+						param={param}
+						value={numericValue}
+						onPreview={onPreview}
+						onCommit={onCommit}
+						className="w-[5.5rem] shrink-0"
+					/>
+				</div>
+			);
+		}
 		return (
 			<NumberParamField
 				param={param}
-				value={typeof value === "number" ? value : Number(value)}
+				value={numericValue}
 				onPreview={onPreview}
 				onCommit={onCommit}
 			/>
@@ -124,6 +161,17 @@ function ParamInput({
 	}
 
 	if (param.type === "color") {
+		if (param.control === "eyedropper") {
+			return (
+				<ColorSampler
+					value={String(value)}
+					label={param.label.toLowerCase()}
+					sampleImageUrl={sampleImageUrl}
+					onChange={(color) => onPreview(color)}
+					onChangeEnd={onCommit}
+				/>
+			);
+		}
 		return (
 			<ColorPicker
 				value={String(value).replace(/^#/, "").toUpperCase()}
@@ -148,11 +196,12 @@ function ParamInput({
 
 	if (param.type === "font") {
 		return (
-			<input
-				className="border-input bg-accent h-9 w-full rounded-md border px-3 text-sm outline-none"
-				value={String(value)}
-				onChange={(event) => onPreview(event.currentTarget.value)}
-				onBlur={onCommit}
+			<FontPicker
+				defaultValue={String(value)}
+				onValueChange={(family) => {
+					onPreview(family);
+					onCommit();
+				}}
 			/>
 		);
 	}
@@ -160,7 +209,7 @@ function ParamInput({
 	return null;
 }
 
-function NumberParamField({
+function NumberParamSlider({
 	param,
 	value,
 	onPreview,
@@ -171,7 +220,69 @@ function NumberParamField({
 	onPreview: (value: number) => void;
 	onCommit: () => void;
 }) {
-	const { min, max, step, displayMultiplier = 1 } = param;
+	const max = param.max ?? 100;
+	// Previewing writes to the preview overlay, but `value` is read back off the
+	// committed element, so it does not budge until the drag ends. A thumb
+	// controlled by it alone would be yanked back on every pointermove — i.e. it
+	// would not move at all — so the in-flight position lives here until
+	// `commitPreview` makes it real.
+	const [dragValue, setDragValue] = useState<number | null>(null);
+	const displayValue = Math.min(max, Math.max(param.min, dragValue ?? value));
+
+	return (
+		<Slider
+			aria-label={param.label}
+			className="min-w-0 flex-1"
+			min={param.min}
+			max={max}
+			step={param.step}
+			value={[displayValue]}
+			trackGradient={param.trackGradient}
+			thumbClassName="border-background bg-primary border-2"
+			// Radix reports every position during the drag, then once more when the
+			// pointer or key is released, which is exactly the preview/commit split
+			// the property fields expect.
+			onValueChange={([next]) => {
+				setDragValue(next);
+				onPreview(next);
+			}}
+			onValueCommit={([next]) => {
+				onPreview(next);
+				// Committing applies the overlay synchronously, so `value` has already
+				// caught up by the time the drag position is dropped.
+				onCommit();
+				setDragValue(null);
+			}}
+		/>
+	);
+}
+
+function NumberParamField({
+	param,
+	value,
+	onPreview,
+	onCommit,
+	className,
+}: {
+	param: NumberParamDefinition;
+	value: number;
+	onPreview: (value: number) => void;
+	onCommit: () => void;
+	className?: string;
+}) {
+	// `unit: "percent"` maps a stored 0..max range onto a 0..100 display range,
+	// matching how the masks panel presents percent params. min/max stay in
+	// stored space in the definition so coerceParamValue keeps clamping
+	// correctly; only the display range is rescaled here.
+	const isPercent = param.unit === "percent";
+	const percentMax = param.max ?? 100;
+	const displayMultiplier = isPercent
+		? 100 / percentMax
+		: (param.displayMultiplier ?? 1);
+	const min = isPercent ? 0 : param.min;
+	const max = isPercent ? 100 : param.max;
+	const step = isPercent ? 1 : param.step;
+	const suffix = param.suffix ?? (isPercent ? "%" : undefined);
 	const displayValue = value * displayMultiplier;
 	const clampDisplayValue = (nextDisplayValue: number) =>
 		Math.max(
@@ -180,9 +291,7 @@ function NumberParamField({
 		);
 
 	const previewFromDisplay = (displayVal: number) => {
-		const clamped = clampDisplayValue(
-			snapToStep({ value: displayVal, step }),
-		);
+		const clamped = clampDisplayValue(snapToStep({ value: displayVal, step }));
 		onPreview(clamped / displayMultiplier);
 	};
 
@@ -209,7 +318,10 @@ function NumberParamField({
 
 	return (
 		<NumberField
+			className={className}
 			icon={param.shortLabel}
+			suffix={suffix}
+			suffixClassName="text-muted-foreground"
 			value={draft.displayValue}
 			dragSensitivity="slow"
 			isDefault={value === param.default}

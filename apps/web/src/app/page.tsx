@@ -1,6 +1,4 @@
-import { Hero } from "@/components/landing/hero";
-import { Header } from "@/components/header";
-import { Footer } from "@/components/footer";
+import { Projects } from "@/project/components/projects";
 import type { Metadata } from "next";
 import { SITE_URL } from "@/site/brand";
 
@@ -11,11 +9,5 @@ export const metadata: Metadata = {
 };
 
 export default async function Home() {
-	return (
-		<div>
-			<Header />
-			<Hero />
-			<Footer />
-		</div>
-	);
+	return <Projects />;
 }

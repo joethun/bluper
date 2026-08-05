@@ -9,6 +9,9 @@ export const ANIMATION_PROPERTY_PATHS = [
 	"transform.rotate",
 	"opacity",
 	"volume",
+	"fontSize",
+	"letterSpacing",
+	"lineHeight",
 	"color",
 	"background.color",
 	"background.paddingX",
@@ -16,18 +19,26 @@ export const ANIMATION_PROPERTY_PATHS = [
 	"background.offsetX",
 	"background.offsetY",
 	"background.cornerRadius",
+	// The Adjust panel's sliders. They have to be listed here as well as in the
+	// param registry: `getElementKeyframes` filters an element's channels through
+	// `isAnimationPath`, so a path missing from this list keyframes correctly but
+	// draws no diamond on the clip and never snaps the playhead.
+	"adjust.saturation",
+	"adjust.temperature",
+	"adjust.hue",
+	"adjust.brightness",
+	"adjust.contrast",
+	"adjust.highlight",
+	"adjust.shadow",
+	"adjust.sharpness",
+	"adjust.vignette",
+	"adjust.grain",
 ] as const;
 
 export type AnimationPropertyPath = (typeof ANIMATION_PROPERTY_PATHS)[number];
 export type GraphicParamPath = `params.${string}`;
 export type EffectParamPath = `effects.${string}.params.${string}`;
 export type AnimationPath = string;
-
-export const ANIMATION_PROPERTY_GROUPS = {
-	"transform.scale": ["transform.scaleX", "transform.scaleY"],
-} as const satisfies Record<string, ReadonlyArray<AnimationPropertyPath>>;
-
-export type AnimationPropertyGroup = keyof typeof ANIMATION_PROPERTY_GROUPS;
 
 export type DiscreteValue = boolean | string;
 
@@ -45,15 +56,15 @@ export type AnimationNumericPropertyPath = Exclude<
 	AnimationColorPropertyPath
 >;
 
-export type ContinuousKeyframeInterpolation = "linear" | "hold" | "bezier";
-export type DiscreteKeyframeInterpolation = "hold";
+type ContinuousKeyframeInterpolation = "linear" | "hold" | "bezier";
+type DiscreteKeyframeInterpolation = "hold";
 export type AnimationInterpolation =
 	| ContinuousKeyframeInterpolation
 	| DiscreteKeyframeInterpolation;
 
 export type ScalarSegmentType = "step" | "linear" | "bezier";
-export type TangentMode = "auto" | "aligned" | "broken" | "flat";
-export type ChannelExtrapolationMode = "hold" | "linear";
+type TangentMode = "auto" | "aligned" | "broken" | "flat";
+type ChannelExtrapolationMode = "hold" | "linear";
 
 export interface CurveHandle {
 	dt: MediaTime;
@@ -75,14 +86,7 @@ export interface ScalarAnimationKey extends BaseAnimationKeyframe<number> {
 
 export type DiscreteAnimationKey = BaseAnimationKeyframe<DiscreteValue>;
 
-export type Keyframe<TValue extends ParamValue = ParamValue> =
-	TValue extends number
-		? ScalarAnimationKey
-		: TValue extends DiscreteValue
-			? DiscreteAnimationKey
-			: never;
-
-export interface ScalarChannel {
+interface ScalarChannel {
 	keys: ScalarAnimationKey[];
 	extrapolation?: {
 		before: ChannelExtrapolationMode;
@@ -90,7 +94,7 @@ export interface ScalarChannel {
 	};
 }
 
-export interface DiscreteChannel {
+interface DiscreteChannel {
 	keys: DiscreteAnimationKey[];
 }
 
@@ -114,17 +118,13 @@ export interface ElementAnimations {
 
 export type NormalizedCubicBezier = [number, number, number, number];
 
-export interface ScalarGraphChannelTarget {
+interface ScalarGraphChannelTarget {
 	propertyPath: AnimationPath;
 	componentKey: string;
 }
 
 export interface ScalarGraphChannel extends ScalarGraphChannelTarget {
 	channel: ScalarAnimationChannel;
-}
-
-export interface ScalarGraphKeyframeRef extends ScalarGraphChannelTarget {
-	keyframeId: string;
 }
 
 export interface ScalarGraphKeyframeContext extends ScalarGraphChannel {

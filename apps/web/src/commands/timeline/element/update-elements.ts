@@ -5,6 +5,7 @@ import {
 	findTrackInSceneTracks,
 	updateElementInSceneTracks,
 } from "@/timeline";
+import { shiftElementsClearOfElement } from "@/timeline/make-room";
 import { applyElementUpdate } from "@/timeline/update-pipeline";
 
 export class UpdateElementsCommand extends Command {
@@ -60,6 +61,19 @@ export class UpdateElementsCommand extends Command {
 				elementId: updateEntry.elementId,
 				update: () => nextElement,
 			});
+
+			// A speed change derives a new length rather than being dragged to one,
+			// so nothing has already stopped it at the neighbour. Where the clip now
+			// reaches past what follows it, the rest of the track gives way.
+			const previousEnd = currentElement.startTime + currentElement.duration;
+			const nextEnd = nextElement.startTime + nextElement.duration;
+			if (nextEnd > previousEnd) {
+				updatedTracks = shiftElementsClearOfElement({
+					tracks: updatedTracks,
+					trackId: updateEntry.trackId,
+					element: nextElement,
+				});
+			}
 		}
 
 		editor.timeline.updateTracks(updatedTracks);

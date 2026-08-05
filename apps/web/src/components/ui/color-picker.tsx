@@ -15,8 +15,7 @@ import {
 	SelectValue,
 } from "./select";
 import { Button } from "./button";
-import { Cancel01Icon, ColorPickerIcon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { PipetteIcon, XIcon } from "lucide-react";
 import {
 	type ColorFormat,
 	appendAlpha,
@@ -306,12 +305,12 @@ function ColorPickerContent({
 							type="button"
 							onClick={handleEyeDropper}
 						>
-							<HugeiconsIcon icon={ColorPickerIcon} />
+							<PipetteIcon />
 						</Button>
 					)}
 					<PopoverClose asChild>
 						<Button variant="ghost" size="icon" type="button">
-							<HugeiconsIcon icon={Cancel01Icon} />
+							<XIcon />
 						</Button>
 					</PopoverClose>
 				</div>
@@ -557,4 +556,4 @@ const ColorCircle = ({
 	/>
 );
 
-export { ColorPicker, ColorPickerContent };
+export { ColorPicker };

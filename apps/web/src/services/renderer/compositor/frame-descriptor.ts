@@ -1,6 +1,12 @@
+import { hashResolvedAdjustments, paintAdjustedLayer } from "@/adjustments";
+import { hashResolvedEffects, paintEffectedLayer } from "@/effects";
+import { borrowSurface } from "@/effects/canvas";
 import { drawCssBackground } from "@/gradients";
 import { getMaskDefinition } from "@/masks";
 import { incrementCounter } from "@/diagnostics/render-perf";
+import { drawTransitionShape } from "@/transitions";
+import type { TransitionShape } from "@/transitions/types";
+import { gpuRenderer } from "../gpu-renderer";
 import type { AnyBaseNode } from "../nodes/base-node";
 import type { CanvasRenderer } from "../canvas-renderer";
 import { createCanvasSurface } from "../canvas-utils";
@@ -240,13 +246,50 @@ async function collectVisualSourceNode({
 			: (node.resolved as ResolvedVisualSourceNodeState).sourceHeight;
 
 	const textureId = `${path}:source`;
-	textures.set(textureId, {
-		kind: "external",
-		id: textureId,
-		source,
-		width: sourceWidth,
-		height: sourceHeight,
-	});
+	const adjustments = node.resolved.adjustments;
+	const canvasEffects = node.resolved.canvasEffects;
+	if (adjustments || canvasEffects.length > 0) {
+		// A graded or affected layer can no longer be handed to the GPU as the decoded
+		// frame itself: the filter chain, the blend-mode passes and the effect stack
+		// have to be drawn first. Hashing the frame's identity alongside the stacks
+		// keeps a paused playhead or a held still from repainting every frame.
+		textures.set(textureId, {
+			kind: "rendered",
+			id: textureId,
+			contentHash: `styled:${identityKey(source)}:${sourceWidth}x${sourceHeight}:${
+				adjustments ? hashResolvedAdjustments({ adjustments }) : ""
+			}:${hashResolvedEffects({ effects: canvasEffects })}`,
+			width: sourceWidth,
+			height: sourceHeight,
+			draw: (ctx) => {
+				paintEffectedLayer({
+					ctx,
+					source,
+					width: sourceWidth,
+					height: sourceHeight,
+					effects: canvasEffects,
+					drawBase: adjustments
+						? ({ ctx: target, source: base, width, height }) =>
+								paintAdjustedLayer({
+									ctx: target,
+									source: base,
+									width,
+									height,
+									adjustments,
+								})
+						: undefined,
+				});
+			},
+		});
+	} else {
+		textures.set(textureId, {
+			kind: "external",
+			id: textureId,
+			source,
+			width: sourceWidth,
+			height: sourceHeight,
+		});
+	}
 
 	const transform = computeVisualTransform({
 		renderer,
@@ -273,6 +316,34 @@ async function collectVisualSourceNode({
 	});
 	if (strokeLayer) {
 		items.push(strokeLayer);
+	}
+
+	// Emitted by the incoming clip only, which sorts after the outgoing one on the
+	// track — so the wash lands above both halves of the cut.
+	const overlay = node.resolved.transitionOverlay;
+	if (overlay && overlay.opacity > 0) {
+		const overlayTextureId = `${path}:transition-overlay`;
+		const { width, height } = renderer;
+		textures.set(overlayTextureId, {
+			kind: "rendered",
+			id: overlayTextureId,
+			contentHash: `transition-overlay:${overlay.color}:${width}x${height}`,
+			width,
+			height,
+			draw: (ctx) => {
+				ctx.fillStyle = overlay.color;
+				ctx.fillRect(0, 0, width, height);
+			},
+		});
+		items.push({
+			type: "layer",
+			textureId: overlayTextureId,
+			transform: fullCanvasTransform(renderer),
+			opacity: overlay.opacity,
+			blendMode: "normal",
+			effectPassGroups: [],
+			mask: null,
+		});
 	}
 }
 
@@ -310,7 +381,38 @@ function collectTextNode({
 		width,
 		height,
 		draw: (ctx) => {
-			renderTextToContext({ node, ctx });
+			const adjustments = node.resolved?.adjustments;
+			const effects = node.resolved?.canvasEffects ?? [];
+			if (!adjustments && effects.length === 0) {
+				renderTextToContext({ node, ctx });
+				return;
+			}
+			// Both the adjustment passes and the effect stack read the finished layer
+			// back, over itself with blend modes or pixel by pixel, so the type has to
+			// be rasterised somewhere they can reach it.
+			const raster = borrowSurface({
+				key: "text-raster",
+				width,
+				height,
+			});
+			renderTextToContext({ node, ctx: raster.ctx });
+			paintEffectedLayer({
+				ctx,
+				source: raster.canvas,
+				width,
+				height,
+				effects,
+				drawBase: adjustments
+					? ({ ctx: target, source: base }) =>
+							paintAdjustedLayer({
+								ctx: target,
+								source: base,
+								width,
+								height,
+								adjustments,
+							})
+					: undefined,
+			});
 		},
 	});
 	items.push({
@@ -385,15 +487,25 @@ function buildMaskArtifacts({
 	mask: LayerMaskDescriptor | null;
 	strokeLayer: FrameItemDescriptor | null;
 } {
+	const transitionShape = node.resolved?.transitionShape ?? null;
 	const mask = node.params.masks?.[0];
-	if (!mask) {
-		return { mask: null, strokeLayer: null };
-	}
+	const definition = mask ? getMaskDefinition(mask.type) : null;
+	const isMaskActive =
+		mask && definition ? definition.isActive?.(mask.params) !== false : false;
 
-	const definition = getMaskDefinition(mask.type);
-
-	if (definition.isActive?.(mask.params) === false) {
-		return { mask: null, strokeLayer: null };
+	if (!mask || !definition || !isMaskActive) {
+		return {
+			mask: transitionShape
+				? buildTransitionMask({
+						renderer,
+						path,
+						transform,
+						textures,
+						shape: transitionShape,
+					})
+				: null,
+			strokeLayer: null,
+		};
 	}
 
 	const { body } = definition.renderer;
@@ -457,12 +569,61 @@ function buildMaskArtifacts({
 				break;
 		}
 
-		drawTransformedCanvas({ ctx, source: elementMaskCanvas, transform });
+		if (!transitionShape) {
+			drawTransformedCanvas({ ctx, source: elementMaskCanvas, transform });
+			return;
+		}
+
+		// A clip can only carry one mask texture, so a mask and an in-flight
+		// transition have to share it. The compositor's feather and inversion
+		// passes would otherwise apply to the combined result and re-soften or
+		// flip the transition reveal along with the mask, so both are resolved
+		// here and the descriptor asks for neither.
+		const { canvas: maskSurface, context: maskCtx } = createCanvasSurface({
+			width: canvasWidth,
+			height: canvasHeight,
+		});
+		drawTransformedCanvas({
+			ctx: maskCtx,
+			source: elementMaskCanvas,
+			transform,
+		});
+		const featheredSurface =
+			feather > 0
+				? gpuRenderer.applyMaskFeather({
+						maskCanvas: maskSurface,
+						width: canvasWidth,
+						height: canvasHeight,
+						feather,
+					})
+				: maskSurface;
+
+		if (mask.params.inverted) {
+			// Alpha has no "invert" composite op: paint solid white and punch the
+			// mask out of it, which leaves 1 - alpha behind.
+			ctx.fillStyle = "white";
+			ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+			ctx.globalCompositeOperation = "destination-out";
+			ctx.drawImage(featheredSurface, 0, 0);
+			ctx.globalCompositeOperation = "source-over";
+		} else {
+			ctx.drawImage(featheredSurface, 0, 0);
+		}
+
+		ctx.globalCompositeOperation = "destination-in";
+		drawTransformedCanvas({
+			ctx,
+			source: createTransitionShapeSurface({ shape: transitionShape, transform }),
+			transform,
+		});
+		ctx.globalCompositeOperation = "source-over";
 	};
 	textures.set(maskTextureId, {
 		kind: "rendered",
 		id: maskTextureId,
-		contentHash: maskContentHash,
+		contentHash: transitionShape
+			? `${maskContentHash}:transition=${JSON.stringify(transitionShape)}`
+			: maskContentHash,
 		width: canvasWidth,
 		height: canvasHeight,
 		draw: drawMask,
@@ -524,13 +685,73 @@ function buildMaskArtifacts({
 	}
 
 	return {
-		mask: {
-			textureId: maskTextureId,
-			feather,
-			inverted: mask.params.inverted,
-		},
+		mask: transitionShape
+			? { textureId: maskTextureId, feather: 0, inverted: false }
+			: {
+					textureId: maskTextureId,
+					feather,
+					inverted: mask.params.inverted,
+				},
 		strokeLayer,
 	};
+}
+
+/**
+ * The reveal mask for a clip that has no mask of its own. Softness is already
+ * baked into the gradient by `drawTransitionShape`, so the descriptor asks for
+ * no feather — the compositor's feather pass runs a jump-flood over a binary
+ * mask and would re-harden then re-soften the edge.
+ */
+function buildTransitionMask({
+	renderer,
+	path,
+	transform,
+	textures,
+	shape,
+}: {
+	renderer: CanvasRenderer;
+	path: string;
+	transform: QuadTransformDescriptor;
+	textures: Map<string, TextureUploadDescriptor>;
+	shape: TransitionShape;
+}): LayerMaskDescriptor {
+	const textureId = `${path}:transition-mask`;
+	const { width: canvasWidth, height: canvasHeight } = renderer;
+
+	textures.set(textureId, {
+		kind: "rendered",
+		id: textureId,
+		contentHash: `transition-mask:${JSON.stringify(shape)}:${transformHash(transform)}:${canvasWidth}x${canvasHeight}`,
+		width: canvasWidth,
+		height: canvasHeight,
+		draw: (ctx) => {
+			drawTransformedCanvas({
+				ctx,
+				source: createTransitionShapeSurface({ shape, transform }),
+				transform,
+			});
+		},
+	});
+
+	return { textureId, feather: 0, inverted: false };
+}
+
+/**
+ * Rasterises a transition's reveal geometry in the layer's own pixel box, ready
+ * to be transformed onto the frame the same way a mask shape is.
+ */
+function createTransitionShapeSurface({
+	shape,
+	transform,
+}: {
+	shape: TransitionShape;
+	transform: QuadTransformDescriptor;
+}): OffscreenCanvas {
+	const width = Math.max(1, Math.round(transform.width));
+	const height = Math.max(1, Math.round(transform.height));
+	const { canvas, context } = createCanvasSurface({ width, height });
+	drawTransitionShape({ ctx: context, shape, width, height });
+	return canvas;
 }
 
 function drawTransformedCanvas({

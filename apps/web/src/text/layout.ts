@@ -35,7 +35,7 @@ export function setCanvasLetterSpacing({
 	}
 }
 
-export function getMetricAscent({
+function getMetricAscent({
 	metrics,
 	fallbackFontSize,
 }: {
@@ -45,7 +45,7 @@ export function getMetricAscent({
 	return metrics.actualBoundingBoxAscent ?? fallbackFontSize * 0.8;
 }
 
-export function getMetricDescent({
+function getMetricDescent({
 	metrics,
 	fallbackFontSize,
 }: {

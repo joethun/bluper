@@ -1,7 +1,7 @@
 import { DefinitionRegistry } from "@/params/registry";
 import type { GraphicDefinition } from "./types";
 
-export class GraphicsRegistry extends DefinitionRegistry<string, GraphicDefinition> {
+class GraphicsRegistry extends DefinitionRegistry<string, GraphicDefinition> {
 	constructor() {
 		super("graphic");
 	}

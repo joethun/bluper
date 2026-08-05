@@ -180,8 +180,6 @@ function normalizeFontWeight({ value }: { value: unknown }): unknown {
 	return value;
 }
 
-export { getProjectId } from "./utils";
-
 function isV4Project({ project }: { project: ProjectRecord }): boolean {
 	const versionValue = project.version;
 	return typeof versionValue === "number" && versionValue >= 4;

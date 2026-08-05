@@ -6,6 +6,7 @@ const ELEMENT_TRACK_MAP: Record<ElementType, TrackType> = {
 	sticker: "graphic",
 	graphic: "graphic",
 	effect: "effect",
+	adjustment: "adjustment",
 	video: "video",
 	image: "video",
 };

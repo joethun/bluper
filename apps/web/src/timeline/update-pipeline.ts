@@ -1,6 +1,8 @@
 import { clampAnimationsToDuration } from "@/animation";
 import {
+	buildCurveRetime,
 	clampRetimeRate,
+	getRetimeCurve,
 	getSourceSpanAtClipTime,
 	getTimelineDurationForSourceSpan,
 } from "@/retime";
@@ -40,12 +42,7 @@ const deriveRules: ElementUpdateRule[] = [
 				return { element };
 			}
 
-			const nextRetime = patch.retime
-				? {
-						...patch.retime,
-						rate: clampRetimeRate({ rate: patch.retime.rate }),
-					}
-				: undefined;
+			const nextRetime = normalizeRetime({ retime: patch.retime });
 
 			const sourceDuration = getSourceDuration({
 				trimStart: originalElement.trimStart,
@@ -196,6 +193,34 @@ function shouldApplyRule({
 	return rule.triggers.some((trigger) => changedFields.has(trigger));
 }
 
+/**
+ * Brings an incoming retime into canonical form. A curve arrives from the panel
+ * mid-drag, so it is sorted and clamped here rather than trusted, and its
+ * average speed is recomputed so `rate` keeps describing the clip.
+ */
+function normalizeRetime({
+	retime,
+}: {
+	retime?: RetimeConfig;
+}): RetimeConfig | undefined {
+	if (!retime) {
+		return undefined;
+	}
+
+	const curve = getRetimeCurve({ retime });
+	if (curve) {
+		return buildCurveRetime({
+			curve,
+			maintainPitch: retime.maintainPitch,
+		});
+	}
+
+	return {
+		rate: clampRetimeRate({ rate: retime.rate }),
+		maintainPitch: retime.maintainPitch,
+	};
+}
+
 function getSourceDuration({
 	trimStart,
 	trimEnd,
@@ -217,6 +242,7 @@ function getSourceDuration({
 		trimStart +
 		getSourceSpanAtClipTime({
 			clipTime: duration,
+			clipDuration: duration,
 			retime,
 		}) +
 		trimEnd

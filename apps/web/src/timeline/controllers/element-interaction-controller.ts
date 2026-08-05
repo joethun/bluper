@@ -21,6 +21,7 @@ import type { FrameRate } from "opencut-wasm";
 import { computeDropTarget } from "@/timeline/components/drop-target";
 import { getMouseTimeFromClientX } from "@/timeline/drag-utils";
 import { generateUUID } from "@/utils/id";
+import { exceedsDragThreshold, type Point } from "@/utils/geometry";
 import type { SnapPoint } from "@/timeline/snapping";
 import type {
 	DropTarget,
@@ -35,23 +36,23 @@ const MOUSE_BUTTON_RIGHT = 2;
 
 // --- Config ---
 
-export interface ViewportAdapter {
+interface ViewportAdapter {
 	getZoomLevel: () => number;
 	getTracksScrollEl: () => HTMLDivElement | null;
 	getTracksContainerEl: () => HTMLDivElement | null;
 	getHeaderEl: () => HTMLElement | null;
 }
 
-export interface InputAdapter {
+interface InputAdapter {
 	isShiftHeld: () => boolean;
 }
 
-export interface SceneReader {
+interface SceneReader {
 	getTracks: () => SceneTracks;
 	getActiveFps: () => FrameRate | null;
 }
 
-export interface ElementSelectionApi {
+interface ElementSelectionApi {
 	getSelected: () => readonly ElementRef[];
 	isSelected: (ref: ElementRef) => boolean;
 	select: (ref: ElementRef) => void;
@@ -59,15 +60,15 @@ export interface ElementSelectionApi {
 	clearKeyframeSelection: () => void;
 }
 
-export interface PlaybackReader {
+interface PlaybackReader {
 	getCurrentTime: () => MediaTime;
 }
 
-export interface TimelineOps {
+interface TimelineOps {
 	moveElements: (args: Pick<GroupMoveResult, "moves" | "createTracks">) => void;
 }
 
-export interface SnapConfig {
+interface SnapConfig {
 	isEnabled: () => boolean;
 	onChange?: (snapPoint: SnapPoint | null) => void;
 }
@@ -87,8 +88,6 @@ export interface ElementInteractionDepsRef {
 }
 
 // --- Session ---
-
-type Point = { readonly x: number; readonly y: number };
 
 interface MousedownSnapshot {
 	readonly origin: Point;
@@ -161,10 +160,11 @@ function movedPastDragThreshold({
 	current: Point;
 	origin: Point;
 }): boolean {
-	return (
-		Math.abs(current.x - origin.x) > TIMELINE_DRAG_THRESHOLD_PX ||
-		Math.abs(current.y - origin.y) > TIMELINE_DRAG_THRESHOLD_PX
-	);
+	return exceedsDragThreshold({
+		current,
+		origin,
+		threshold: TIMELINE_DRAG_THRESHOLD_PX,
+	});
 }
 
 function frameSnappedMouseTime({

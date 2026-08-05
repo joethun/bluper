@@ -32,6 +32,7 @@ import {
 	type TimelineTrack,
 } from "@/timeline";
 import type { ElementRef } from "@/timeline/types";
+import { isFrozenElement } from "@/freeze";
 import type { FrameRate } from "opencut-wasm";
 
 // --- Session ---
@@ -69,7 +70,7 @@ export interface ResizeConfigRef {
 
 // --- Pure helpers ---
 
-export function buildResizeMembers({
+function buildResizeMembers({
 	tracks,
 	selectedElements,
 }: {
@@ -132,6 +133,7 @@ export function buildResizeMembers({
 				trimEnd: element.trimEnd,
 				sourceDuration: element.sourceDuration,
 				retime: isRetimableElement(element) ? element.retime : undefined,
+				isFrozen: isFrozenElement({ element }),
 				leftNeighborBound,
 				rightNeighborBound,
 			},

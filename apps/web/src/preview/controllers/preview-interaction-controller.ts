@@ -21,6 +21,7 @@ import type { TCanvasSize } from "@/project/types";
 import type { ParamValues } from "@/params";
 import { buildTransformFromParams, type Transform } from "@/rendering";
 import { isVisualElement } from "@/timeline/element-utils";
+import { exceedsDragThreshold, type Point } from "@/utils/geometry";
 import type {
 	ElementRef,
 	SceneTracks,
@@ -32,8 +33,6 @@ import type {
 
 const MIN_DRAG_DISTANCE = 0.5;
 const PRIMARY_POINTER_BUTTON = 0;
-
-type Point = { readonly x: number; readonly y: number };
 
 interface CapturedPointerState {
 	readonly pointerId: number;
@@ -67,9 +66,7 @@ interface DraggingGesture extends CapturedPointerState {
 }
 
 type GestureSession =
-	| { readonly kind: "idle" }
-	| PendingGesture
-	| DraggingGesture;
+	{ readonly kind: "idle" } | PendingGesture | DraggingGesture;
 
 const IDLE_GESTURE: GestureSession = { kind: "idle" };
 
@@ -79,7 +76,7 @@ export interface EditingTextState {
 	readonly element: TextElement;
 }
 
-export interface PreviewViewportAdapter {
+interface PreviewViewportAdapter {
 	screenToCanvas: ({
 		clientX,
 		clientY,
@@ -94,30 +91,30 @@ export interface PreviewViewportAdapter {
 	}) => Point;
 }
 
-export interface InputAdapter {
+interface InputAdapter {
 	isShiftHeld: () => boolean;
 }
 
-export interface SceneReader {
+interface SceneReader {
 	getTracks: () => SceneTracks;
 	getCurrentTime: () => number;
 	getMediaAssets: () => MediaAsset[];
 	getCanvasSize: () => TCanvasSize;
 }
 
-export interface SelectionApi {
+interface SelectionApi {
 	getSelected: () => readonly ElementRef[];
 	setSelected: (elements: readonly ElementRef[]) => void;
 	clearSelection: () => void;
 }
 
-export interface TimelinePreviewUpdate {
+interface TimelinePreviewUpdate {
 	readonly trackId: string;
 	readonly elementId: string;
 	readonly updates: Partial<TimelineElement>;
 }
 
-export interface TimelineOps {
+interface TimelineOps {
 	getElementsWithTracks: ({
 		elements,
 	}: {
@@ -128,12 +125,12 @@ export interface TimelineOps {
 	discardPreview: () => void;
 }
 
-export interface PlaybackApi {
+interface PlaybackApi {
 	getIsPlaying: () => boolean;
 	subscribe: (listener: () => void) => () => void;
 }
 
-export interface PreviewOptions {
+interface PreviewOptions {
 	isMaskMode: () => boolean;
 	onSnapLinesChange?: (lines: SnapLine[]) => void;
 }
@@ -198,10 +195,11 @@ function movedPastDragThreshold({
 	current: Point;
 	origin: Point;
 }): boolean {
-	return (
-		Math.abs(current.x - origin.x) > MIN_DRAG_DISTANCE ||
-		Math.abs(current.y - origin.y) > MIN_DRAG_DISTANCE
-	);
+	return exceedsDragThreshold({
+		current,
+		origin,
+		threshold: MIN_DRAG_DISTANCE,
+	});
 }
 
 function toDragElementSnapshots({
@@ -568,17 +566,21 @@ export class PreviewInteractionController {
 			snappedPosition.y - firstElement.initialTransform.position.y;
 
 		this.deps.timeline.previewElements(
-			drag.elements.map(({ trackId, elementId, initialTransform, initialParams }) => ({
-				trackId,
-				elementId,
-				updates: {
-					params: {
-						...initialParams,
-						"transform.positionX": initialTransform.position.x + deltaSnappedX,
-						"transform.positionY": initialTransform.position.y + deltaSnappedY,
+			drag.elements.map(
+				({ trackId, elementId, initialTransform, initialParams }) => ({
+					trackId,
+					elementId,
+					updates: {
+						params: {
+							...initialParams,
+							"transform.positionX":
+								initialTransform.position.x + deltaSnappedX,
+							"transform.positionY":
+								initialTransform.position.y + deltaSnappedY,
+						},
 					},
-				},
-			})),
+				}),
+			),
 		);
 	}
 }

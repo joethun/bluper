@@ -32,11 +32,42 @@ export function isKey(value: string): value is Key {
 	return KEY_SET.has(value);
 }
 
-export type ModifierBasedShortcutKey = `${ModifierKeys}+${Key}`;
+const MODIFIERS = [
+	"ctrl",
+	"alt",
+	"shift",
+	"ctrl+shift",
+	"alt+shift",
+	"ctrl+alt",
+	"ctrl+alt+shift",
+] as const satisfies ReadonlyArray<ModifierKeys>;
+
+const MODIFIER_SET: ReadonlySet<string> = new Set(MODIFIERS);
+
+type ModifierBasedShortcutKey = `${ModifierKeys}+${Key}`;
 // Singular keybindings (these will be disabled when an input-ish area has been focused)
-export type SingleCharacterShortcutKey = `${Key}`;
+type SingleCharacterShortcutKey = `${Key}`;
 
 export type ShortcutKey = ModifierBasedShortcutKey | SingleCharacterShortcutKey;
+
+/**
+ * Validate an untrusted string (persisted state, imported config) as a shortcut.
+ *
+ * A shortcut is either a bare `Key` or a `ModifierKeys`-prefixed one. The key is
+ * always the final `+`-delimited segment, so everything before the last `+` must
+ * form a known modifier combination.
+ */
+export function isShortcutKey(value: string): value is ShortcutKey {
+	const separatorIndex = value.lastIndexOf("+");
+	if (separatorIndex === -1) {
+		return isKey(value);
+	}
+
+	return (
+		MODIFIER_SET.has(value.slice(0, separatorIndex)) &&
+		isKey(value.slice(separatorIndex + 1))
+	);
+}
 
 export type KeybindingConfig = {
 	[key in ShortcutKey]?: TActionWithOptionalArgs;

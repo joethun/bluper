@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Button } from "../ui/button";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { ArrowLeft01Icon, ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import { ChevronLeftIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 const STORAGE_KEY = "mobile-acknowledged";
@@ -42,7 +40,7 @@ export function MobileGate({ children }: MobileGateProps) {
 				className="absolute top-6 left-6 flex items-center gap-1 text-muted-foreground"
 				onClick={handleGoBack}
 			>
-				<HugeiconsIcon icon={ArrowLeft01Icon} className="size-4" />
+				<ChevronLeftIcon className="size-4" />
 				<span className=" text-sm">Go back</span>
 			</Button>
 
@@ -52,19 +50,13 @@ export function MobileGate({ children }: MobileGateProps) {
 						Desktop only (for now)
 					</h1>
 					<p className="text-muted-foreground text-sm leading-relaxed">
-						OpenCut isn't optimized for mobile or iPad yet. Things will break
+						Bluper isn't optimized for mobile or iPad yet. Things will break
 						and the layout will be a mess. Come back on a desktop for the real
 						experience.
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
 					<Button onClick={handleContinue}>Take a look anyway</Button>
-					<Button variant="ghost" asChild>
-						<Link href="/roadmap" className="flex items-center gap-1">
-							Roadmap
-							<HugeiconsIcon icon={ArrowRight01Icon} size={14} />
-						</Link>
-					</Button>
 				</div>
 			</div>
 		</div>

@@ -6,7 +6,7 @@ export type PreviewOverlayHudAnchor =
 	| "bottom-left"
 	| "bottom-right";
 
-export type PreviewOverlayMount =
+type PreviewOverlayMount =
 	| {
 			kind: "hud";
 			anchor: PreviewOverlayHudAnchor;
@@ -29,7 +29,7 @@ export type PreviewOverlayMount =
 
 export type PreviewOverlayPlane = "under-interaction" | "over-interaction";
 
-export interface PreviewOverlayRenderContext {
+interface PreviewOverlayRenderContext {
 	sceneHeight: number;
 	sceneWidth: number;
 }

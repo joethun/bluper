@@ -12,15 +12,18 @@ import { useEditor } from "@/editor/use-editor";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import { useMenuPreview } from "@/editor/use-menu-preview";
 import { getVisibleElementsWithBounds } from "@/preview/element-bounds";
-import { HugeiconsIcon } from "@hugeicons/react";
 import {
-	ArrowExpandIcon,
-	Delete02Icon,
+	ContrastIcon,
+	ExpandIcon,
 	FeatherIcon,
-	PlusSignIcon,
-	RotateClockwiseIcon,
-	TextFontIcon,
-} from "@hugeicons/core-free-icons";
+	MoveHorizontalIcon,
+	MoveVerticalIcon,
+	PlusIcon,
+	RotateCwIcon,
+	ShapesIcon,
+	Trash2Icon,
+	TypeIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ColorPicker } from "@/components/ui/color-picker";
@@ -59,13 +62,9 @@ import {
 	SectionHeader,
 	SectionTitle,
 } from "@/components/section";
+import { PanelEmptyState } from "@/components/editor/panels/panel-empty-state";
+import { PanelHeader } from "@/components/editor/panels/panel-header";
 import { usePropertyDraft } from "@/components/editor/panels/properties/hooks/use-property-draft";
-import {
-	OcMirrorIcon,
-	OcShapesIcon,
-	OcTextHeightIcon,
-	OcTextWidthIcon,
-} from "@/components/icons";
 import { cn } from "@/utils/ui";
 
 type MasksTabProps = {
@@ -253,8 +252,7 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 
 	return (
 		<div className="flex flex-col h-full">
-			<div className="border-b px-3.5 h-11 shrink-0 flex items-center justify-between gap-2">
-				<SectionTitle>Masks</SectionTitle>
+			<PanelHeader title="Masks">
 				<DropdownMenu
 					open={hasMask ? false : isDropdownOpen}
 					onOpenChange={handleDropdownOpenChange}
@@ -269,7 +267,7 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 										disabled
 										aria-label="Add mask"
 									>
-										<HugeiconsIcon icon={PlusSignIcon} className="size-3.5!" />
+										<PlusIcon />
 									</Button>
 								</span>
 							</TooltipTrigger>
@@ -281,7 +279,7 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 					) : (
 						<DropdownMenuTrigger asChild>
 							<Button variant="ghost" size="icon" aria-label="Add mask">
-								<HugeiconsIcon icon={PlusSignIcon} className="size-3.5!" />
+								<PlusIcon />
 							</Button>
 						</DropdownMenuTrigger>
 					)}
@@ -294,13 +292,13 @@ export function MasksTab({ element, trackId }: MasksTabProps) {
 								}
 								onClick={() => commitMask({ maskType: definition.type })}
 							>
-								<HugeiconsIcon {...definition.icon} />
+								<definition.icon />
 								{definition.name}
 							</DropdownMenuItem>
 						))}
 					</DropdownMenuContent>
 				</DropdownMenu>
-			</div>
+			</PanelHeader>
 
 			{masks.length === 0 ? (
 				<EmptyView onAddMask={() => setIsDropdownOpen(true)} />
@@ -349,7 +347,7 @@ function MaskItem({
 								})
 							}
 						>
-							<OcMirrorIcon
+							<ContrastIcon
 								className={cn(mask.params.inverted && "-scale-x-100")}
 							/>
 						</Button>
@@ -365,13 +363,13 @@ function MaskItem({
 								})
 							}
 						>
-							<HugeiconsIcon icon={Delete02Icon} />
+							<Trash2Icon />
 						</Button>
 					</div>
 				}
 			>
 				<div className="flex items-center gap-2">
-					<HugeiconsIcon {...definition.icon} size={14} />
+					<definition.icon className="size-3.5 shrink-0" />
 					<SectionTitle className="capitalize font-normal">
 						{definition.name}
 					</SectionTitle>
@@ -545,7 +543,7 @@ function MaskParamsFields({
 				<SectionField label="Scale">
 					<MaskNumberField
 						icon={
-							isTextMask(mask) ? <HugeiconsIcon icon={ArrowExpandIcon} /> : "S"
+							isTextMask(mask) ? <ExpandIcon /> : "S"
 						}
 						param={getNumberParamDefinition({
 							definition,
@@ -564,7 +562,7 @@ function MaskParamsFields({
 			{definition.features.hasRotation && "rotation" in mask.params && (
 				<SectionField label="Rotation">
 					<MaskNumberField
-						icon={<HugeiconsIcon icon={RotateClockwiseIcon} />}
+						icon={<RotateCwIcon />}
 						param={getNumberParamDefinition({
 							definition,
 							key: "rotation",
@@ -581,7 +579,7 @@ function MaskParamsFields({
 
 			<SectionField label="Feather">
 				<MaskNumberField
-					icon={<HugeiconsIcon icon={FeatherIcon} />}
+					icon={<FeatherIcon />}
 					param={featherParam}
 					value={getMaskNumber({
 						params: mask.params,
@@ -705,7 +703,7 @@ function TextMaskFields({
 			</SectionField>
 			<SectionField label="Size">
 				<MaskNumberField
-					icon={<HugeiconsIcon icon={TextFontIcon} />}
+					icon={<TypeIcon />}
 					param={fontSizeParam}
 					value={mask.params.fontSize}
 					onPreview={previewNumberParam("fontSize")}
@@ -716,7 +714,7 @@ function TextMaskFields({
 				<div className="flex items-start gap-2">
 					<MaskNumberField
 						className="w-1/2"
-						icon={<OcTextWidthIcon size={14} />}
+						icon={<MoveHorizontalIcon />}
 						param={LETTER_SPACING_PARAM}
 						value={mask.params.letterSpacing ?? 0}
 						onPreview={previewNumberParam("letterSpacing")}
@@ -724,7 +722,7 @@ function TextMaskFields({
 					/>
 					<MaskNumberField
 						className="w-1/2"
-						icon={<OcTextHeightIcon size={14} />}
+						icon={<MoveVerticalIcon />}
 						param={LINE_HEIGHT_PARAM}
 						value={mask.params.lineHeight ?? 1.2}
 						onPreview={previewNumberParam("lineHeight")}
@@ -836,17 +834,15 @@ function MaskNumberField({
 
 function EmptyView({ onAddMask }: EmptyViewProps) {
 	return (
-		<div className="flex flex-col h-full items-center justify-center gap-4 text-center">
-			<OcShapesIcon className="size-10 text-muted-foreground" strokeWidth={1} />
-			<div className="flex flex-col gap-2">
-				<h3 className="font-medium text-foreground">No masks</h3>
-				<p className="text-muted-foreground text-sm text-balance max-w-40">
-					Add a mask to hide or reveal parts of this layer.
-				</p>
-			</div>
-			<Button variant="default" size="sm" onClick={onAddMask}>
-				Add mask
-			</Button>
-		</div>
+		<PanelEmptyState
+			icon={ShapesIcon}
+			title="No masks"
+			description="Add a mask to hide or reveal parts of this layer."
+			action={
+				<Button variant="default" size="sm" onClick={onAddMask}>
+					Add mask
+				</Button>
+			}
+		/>
 	);
 }

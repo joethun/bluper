@@ -199,6 +199,11 @@ export class InsertElementCommand extends Command {
 			return false;
 		}
 
+		if (element.type === "adjustment" && !Array.isArray(element.adjustments)) {
+			console.error("Adjustment element must have an adjustments array");
+			return false;
+		}
+
 		return true;
 	}
 

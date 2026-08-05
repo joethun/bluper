@@ -85,7 +85,7 @@ export function TextEditOverlay({
 	});
 
 	const { x: displayScaleX } = viewport.getDisplayScale();
-	const textParams = buildTextLayoutParamsFromElement({ element });
+	const textParams = buildTextLayoutParamsFromElement({ element, localTime });
 	const resolvedTextLayout = resolveTextLayout({
 		text: textParams,
 		canvasHeight: canvasSize.height,

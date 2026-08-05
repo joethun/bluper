@@ -1,10 +1,16 @@
 import { useRef } from "react";
 import { useEditor } from "@/editor/use-editor";
+import { PanelHeader } from "@/components/editor/panels/panel-header";
 import { NumberField } from "@/components/ui/number-field";
 import { Switch } from "@/components/ui/switch";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { DashboardSpeed02Icon } from "@hugeicons/core-free-icons";
-import { buildConstantRetime } from "@/retime";
+import {
+	buildConstantRetime,
+	buildCurveRetime,
+	buildRetimeCurvePreset,
+	getRetimeCurve,
+	getSourceSpanAtClipTime,
+	getTimelineDurationForSourceSpan,
+} from "@/retime";
 import {
 	DEFAULT_RETIME_RATE,
 	MIN_RETIME_RATE,
@@ -12,14 +18,18 @@ import {
 	clampRetimeRate,
 	canMaintainPitch,
 } from "@/retime/rate";
-import type { AudioElement, VideoElement } from "@/timeline";
+import type {
+	AudioElement,
+	RetimeCurve,
+	RetimeCurvePresetId,
+	VideoElement,
+} from "@/timeline";
+import { type MediaTime, mediaTimeToSeconds, roundMediaTime } from "@/wasm";
 import {
 	Section,
 	SectionContent,
 	SectionField,
 	SectionFields,
-	SectionHeader,
-	SectionTitle,
 } from "@/components/section";
 import { usePropertyDraft } from "@/components/editor/panels/properties/hooks/use-property-draft";
 import {
@@ -27,6 +37,8 @@ import {
 	getFractionDigitsForStep,
 	snapToStep,
 } from "@/utils/math";
+import { SpeedCurveGraph } from "./speed-curve-graph";
+import { SpeedCurvePresets } from "./speed-curve-presets";
 
 const SPEED_STEP = 0.01;
 const SPEED_FRACTION_DIGITS = getFractionDigitsForStep({ step: SPEED_STEP });
@@ -43,6 +55,39 @@ function parseSpeedInput({ input }: { input: string }): number | null {
 	if (Number.isNaN(parsed)) return null;
 	return clampRetimeRate({
 		rate: snapToStep({ value: parsed, step: SPEED_STEP }),
+	});
+}
+
+function secondsToDisplay({ seconds }: { seconds: number }): string {
+	return `${seconds.toFixed(1)}s`;
+}
+
+/**
+ * The material the clip's trims leave on screen. `sourceDuration` and the trims
+ * are all untouched by retiming, so this figure holds still while a speed is
+ * being dragged; only clips that predate `sourceDuration` have to work back from
+ * their own length.
+ */
+function getVisibleSourceSpan({
+	element,
+}: {
+	element: AudioElement | VideoElement;
+}): MediaTime {
+	if (element.sourceDuration != null) {
+		return roundMediaTime({
+			time: Math.max(
+				0,
+				element.sourceDuration - element.trimStart - element.trimEnd,
+			),
+		});
+	}
+
+	return roundMediaTime({
+		time: getSourceSpanAtClipTime({
+			clipTime: element.duration,
+			clipDuration: element.duration,
+			retime: element.retime,
+		}),
 	});
 }
 
@@ -65,12 +110,29 @@ export function SpeedTab({
 	trackId: string;
 }) {
 	const editor = useEditor();
+	const retime = element.retime;
 	const rate = clampRetimeRate({
-		rate: element.retime?.rate ?? DEFAULT_RETIME_RATE,
+		rate: retime?.rate ?? DEFAULT_RETIME_RATE,
 	});
 	const isPitchPreserveAvailable = canMaintainPitch({ rate });
-	const maintainPitch = element.retime?.maintainPitch ?? false;
+	const maintainPitch = retime?.maintainPitch ?? false;
+	const curve = getRetimeCurve({ retime });
 	const pendingRateRef = useRef(rate);
+
+	// A curve keeps the material the trim exposes and changes how long the clip
+	// runs, so the readout is that span at 1x against the length it plays for. The
+	// span comes from the trims, which a speed change never touches, so the
+	// "before" figure does not move when the speed does.
+	const sourceSpan = getVisibleSourceSpan({ element });
+	const sourceSpanSeconds = mediaTimeToSeconds({ time: sourceSpan });
+	const durationSeconds = mediaTimeToSeconds({
+		time: roundMediaTime({
+			time: getTimelineDurationForSourceSpan({
+				sourceSpan,
+				retime,
+			}),
+		}),
+	});
 
 	const commitRetime = ({
 		rate: nextRate,
@@ -83,6 +145,28 @@ export function SpeedTab({
 			trackId,
 			elementId: element.id,
 			retime: buildRetime({ rate: nextRate, maintainPitch: nextMaintainPitch }),
+		});
+	};
+
+	const commitCurve = ({ curve: nextCurve }: { curve: RetimeCurve }) => {
+		editor.timeline.updateElementRetime({
+			trackId,
+			elementId: element.id,
+			retime: buildCurveRetime({ curve: nextCurve, maintainPitch }),
+		});
+	};
+
+	const previewCurve = ({ curve: nextCurve }: { curve: RetimeCurve }) => {
+		editor.timeline.previewElements({
+			updates: [
+				{
+					trackId,
+					elementId: element.id,
+					updates: {
+						retime: buildCurveRetime({ curve: nextCurve, maintainPitch }),
+					},
+				},
+			],
 		});
 	};
 
@@ -109,48 +193,101 @@ export function SpeedTab({
 	});
 
 	return (
-		<Section collapsible sectionKey={`${element.id}:speed`}>
-			<SectionHeader>
-				<SectionTitle>Speed</SectionTitle>
-			</SectionHeader>
-			<SectionContent>
-				<SectionFields>
-					<SectionField label="Speed">
-						<NumberField
-							icon={<HugeiconsIcon icon={DashboardSpeed02Icon} />}
-							value={speedDraft.displayValue}
-							suffix="x"
-							scrubRanges={[
-								{ from: 0.01, to: 1, pixelsPerUnit: 160 },
-								{ from: 1, to: 5, pixelsPerUnit: 48 },
-							]}
-							scrubClamp={{ min: MIN_RETIME_RATE, max: MAX_RETIME_RATE }}
-							onFocus={() => {
-								pendingRateRef.current = rate;
-								speedDraft.onFocus();
-							}}
-							onChange={speedDraft.onChange}
-							onBlur={speedDraft.onBlur}
-							onScrub={speedDraft.scrubTo}
-							onScrubEnd={speedDraft.commitScrub}
-							onReset={() =>
-								commitRetime({ rate: DEFAULT_RETIME_RATE, maintainPitch })
-							}
-							isDefault={rate === DEFAULT_RETIME_RATE}
-						/>
-					</SectionField>
-					<div className="flex items-center justify-between">
-						<span className="text-sm">Change pitch</span>
-						<Switch
-							checked={!maintainPitch}
-							disabled={!isPitchPreserveAvailable}
-							onCheckedChange={(checked) =>
-								commitRetime({ rate, maintainPitch: !checked })
-							}
-						/>
-					</div>
-				</SectionFields>
-			</SectionContent>
-		</Section>
+		<div className="flex h-full flex-col">
+			<PanelHeader title="Speed" />
+			<Section sectionKey={`${element.id}:speed`}>
+				<SectionContent className="pt-4">
+					<SectionFields>
+						{curve ? (
+							<SectionField label="Duration">
+								<div className="flex h-7 items-center gap-1.5 text-sm">
+									<span className="text-muted-foreground">
+										{secondsToDisplay({ seconds: sourceSpanSeconds })}
+									</span>
+									<span className="text-muted-foreground">&rarr;</span>
+									<span className="font-medium">
+										{secondsToDisplay({ seconds: durationSeconds })}
+									</span>
+								</div>
+							</SectionField>
+						) : (
+							<SectionField label="Speed">
+								<NumberField
+									value={speedDraft.displayValue}
+									suffix="x"
+									suffixClassName="text-muted-foreground"
+									dragSensitivity="slow"
+									scrubRanges={[
+										{ from: 0.01, to: 1, pixelsPerUnit: 160 },
+										{ from: 1, to: 5, pixelsPerUnit: 48 },
+									]}
+									scrubClamp={{ min: MIN_RETIME_RATE, max: MAX_RETIME_RATE }}
+									onFocus={() => {
+										pendingRateRef.current = rate;
+										speedDraft.onFocus();
+									}}
+									onChange={speedDraft.onChange}
+									onBlur={speedDraft.onBlur}
+									onScrub={speedDraft.scrubTo}
+									onScrubEnd={speedDraft.commitScrub}
+									onReset={() =>
+										commitRetime({ rate: DEFAULT_RETIME_RATE, maintainPitch })
+									}
+									isDefault={rate === DEFAULT_RETIME_RATE}
+								/>
+							</SectionField>
+						)}
+						<SectionField label="Change pitch">
+							<Switch
+								checked={!maintainPitch}
+								disabled={!isPitchPreserveAvailable}
+								onCheckedChange={(checked) => {
+									if (curve) {
+										editor.timeline.updateElementRetime({
+											trackId,
+											elementId: element.id,
+											retime: buildCurveRetime({
+												curve,
+												maintainPitch: !checked,
+											}),
+										});
+										return;
+									}
+									commitRetime({ rate, maintainPitch: !checked });
+								}}
+							/>
+						</SectionField>
+						<SectionField label="Speed curve">
+							<SpeedCurvePresets
+								selectedPreset={curve?.preset}
+								onSelect={(presetId: RetimeCurvePresetId) =>
+									commitCurve({
+										curve: buildRetimeCurvePreset({ presetId }),
+									})
+								}
+								onClear={() =>
+									commitRetime({ rate: DEFAULT_RETIME_RATE, maintainPitch })
+								}
+							/>
+						</SectionField>
+						{curve ? (
+							<SpeedCurveGraph
+								// A new preset is a new set of handles, so the graph starts
+								// again rather than keeping a selection that has moved.
+								key={curve.preset}
+								curve={curve}
+								onPreview={(nextCurve) => previewCurve({ curve: nextCurve })}
+								onCommit={(nextCurve) => commitCurve({ curve: nextCurve })}
+								onReset={() =>
+									commitCurve({
+										curve: buildRetimeCurvePreset({ presetId: curve.preset }),
+									})
+								}
+							/>
+						) : null}
+					</SectionFields>
+				</SectionContent>
+			</Section>
+		</div>
 	);
 }

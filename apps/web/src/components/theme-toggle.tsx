@@ -3,8 +3,7 @@
 import { Button } from "./ui/button";
 import { useTheme } from "next-themes";
 import { cn } from "@/utils/ui";
-import { Sun03Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
+import { SunIcon } from "lucide-react";
 
 interface ThemeToggleProps {
 	className?: string;
@@ -29,8 +28,7 @@ export function ThemeToggle({
 				onToggle?.(e);
 			}}
 		>
-			<HugeiconsIcon
-				icon={Sun03Icon}
+			<SunIcon
 				className={cn("!size-[1.1rem]", iconClassName)}
 			/>
 			<span className="sr-only">{theme === "dark" ? "Light" : "Dark"}</span>

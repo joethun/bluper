@@ -2,7 +2,7 @@ import type { ParamDefinition, ParamValues } from "@/params";
 
 export const DEFAULT_GRAPHIC_SOURCE_SIZE = 512;
 
-export interface GraphicRenderContext {
+interface GraphicRenderContext {
 	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 	params: ParamValues;
 	width: number;

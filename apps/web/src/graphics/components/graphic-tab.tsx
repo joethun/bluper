@@ -8,7 +8,11 @@ import {
 } from "@/components/editor/panels/properties/hooks/use-keyframed-param-property";
 import type { ParamDefinition, ParamValues } from "@/params";
 import type { GraphicElement } from "@/timeline";
-import { graphicsRegistry, registerDefaultGraphics, resolveGraphicElementParamsAtTime } from "@/graphics";
+import {
+	graphicsRegistry,
+	registerDefaultGraphics,
+	resolveGraphicElementParamsAtTime,
+} from "@/graphics";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import { useEditor } from "@/editor/use-editor";
 import {
@@ -18,10 +22,10 @@ import {
 	SectionHeader,
 	SectionTitle,
 } from "@/components/section";
+import { PanelHeader } from "@/components/editor/panels/panel-header";
 import { PropertyParamField } from "@/components/editor/panels/properties/components/property-param-field";
 import { Button } from "@/components/ui/button";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { MinusSignIcon, PlusSignIcon } from "@hugeicons/core-free-icons";
+import { MinusIcon, PlusIcon } from "lucide-react";
 import { cn } from "@/utils/ui";
 import type { MediaTime } from "@/wasm";
 
@@ -57,7 +61,8 @@ export function GraphicTab({
 	const hasStrokeParams = definition.params.some((p) => p.group === "stroke");
 
 	return (
-		<div className="flex flex-col">
+		<div className="flex h-full flex-col">
+			<PanelHeader title="Graphic" />
 			<Section collapsible sectionKey={`${element.id}:graphic`}>
 				<SectionHeader>
 					<SectionTitle>{definition.name}</SectionTitle>
@@ -159,10 +164,7 @@ function StrokeSection({
 							toggleStroke();
 						}}
 					>
-						<HugeiconsIcon
-							icon={isStrokeEnabled ? MinusSignIcon : PlusSignIcon}
-							strokeWidth={1}
-						/>
+						{isStrokeEnabled ? <MinusIcon /> : <PlusIcon />}
 					</Button>
 				}
 			>
@@ -231,6 +233,7 @@ function AnimatedGraphicParamField({
 			onCommit={animatedParam.onCommit}
 			keyframe={{
 				isActive: animatedParam.isKeyframedAtTime,
+				isAnimated: animatedParam.hasAnimatedKeyframes,
 				isDisabled: !isPlayheadWithinElementRange,
 				onToggle: animatedParam.toggleKeyframe,
 			}}

@@ -27,8 +27,14 @@ export interface ExportResult {
 	cancelled?: boolean;
 }
 
+// "preparing" covers decoding and mixing audio, which happens before the first
+// frame is rendered and reports no measurable progress. "rendering" is the only
+// phase with a meaningful percentage.
+export type ExportPhase = "idle" | "preparing" | "rendering";
+
 export interface ExportState {
 	isExporting: boolean;
+	phase: ExportPhase;
 	progress: number;
 	result: ExportResult | null;
 }
