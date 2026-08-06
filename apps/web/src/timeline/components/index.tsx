@@ -195,6 +195,18 @@ export function Timeline() {
 						(tracksViewportWidth || containerWidth),
 				),
 		});
+
+	const {
+		handleRulerMouseDown: handlePlayheadRulerMouseDown,
+		notifyUserScrolled,
+		wasLastScrollProgrammatic,
+	} = useTimelinePlayhead({
+		zoomLevel,
+		rulerRef,
+		rulerScrollRef,
+		tracksScrollRef,
+		playheadRef,
+	});
 	const { isResizing, handleResizeStart } = useTimelineResize({
 		zoomLevel,
 		onSnapPointChange: handleSnapPointChange,
@@ -291,6 +303,7 @@ export function Timeline() {
 				tracks.scrollTop = Math.max(0, tracks.scrollTop + e.deltaY);
 			}
 
+			notifyUserScrolled();
 			syncFollowers();
 			saveScrollPositionRef.current();
 		};
@@ -303,7 +316,7 @@ export function Timeline() {
 			container.removeEventListener("wheel", onWheel, { capture: true });
 			if (zoomRafId !== null) cancelAnimationFrame(zoomRafId);
 		};
-	}, [syncFollowers]);
+	}, [syncFollowers, notifyUserScrolled]);
 
 	useInitialScrollBottom({
 		tracksScrollRef,
@@ -332,15 +345,6 @@ export function Timeline() {
 		snappingEnabled,
 		onSnapPointChange: handleSnapPointChange,
 	});
-
-	const { handleRulerMouseDown: handlePlayheadRulerMouseDown } =
-		useTimelinePlayhead({
-			zoomLevel,
-			rulerRef,
-			rulerScrollRef,
-			tracksScrollRef,
-			playheadRef,
-		});
 
 	const { isDragOver, dropTarget, dragProps } = useTimelineDragDrop({
 		containerRef: tracksContainerRef,
@@ -504,6 +508,9 @@ export function Timeline() {
 						className="flex-1"
 						ref={tracksScrollRef}
 						onScroll={() => {
+							if (!wasLastScrollProgrammatic()) {
+								notifyUserScrolled();
+							}
 							syncFollowers();
 							saveScrollPosition();
 						}}

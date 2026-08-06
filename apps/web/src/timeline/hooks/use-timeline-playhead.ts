@@ -58,15 +58,37 @@ export function useTimelinePlayhead({
 	const configRef = useCommittedRef(config);
 	const [ctrl] = useState(() => new PlayheadController({ configRef }));
 
-	// Scroll → keep playhead position in sync with scroll offset.
+	// Scroll → keep playhead position in sync with scroll offset. Also flags
+	// the user as having scrolled, so the playback auto-follow stops fighting
+	// their viewport. Programmatic writes (auto-follow, edge auto-scroll)
+	// stamp a timestamp on the controller and are ignored here.
 	useEffect(() => {
 		const scrollEl = rulerScrollRef.current;
 		if (!scrollEl) return;
-		const handler = () =>
+		const handler = () => {
+			if (!ctrl.wasLastScrollProgrammatic()) {
+				ctrl.notifyUserScrolled();
+			}
 			ctrl.updatePlayheadLeft(editor.playback.getCurrentTime());
+		};
 		scrollEl.addEventListener("scroll", handler, { passive: true });
 		return () => scrollEl.removeEventListener("scroll", handler);
 	}, [ctrl, editor.playback, rulerScrollRef]);
+
+	// When playback restarts, re-engage the auto-follow snap. A fresh play()
+	// is the user's clearest signal that they want the camera back on the
+	// playhead.
+	useEffect(() => {
+		let prevIsPlaying = editor.playback.getIsPlaying();
+		const unsubscribe = editor.playback.subscribe(() => {
+			const isPlaying = editor.playback.getIsPlaying();
+			if (isPlaying && !prevIsPlaying) {
+				ctrl.resetUserScrolledDuringPlayback();
+			}
+			prevIsPlaying = isPlaying;
+		});
+		return unsubscribe;
+	}, [ctrl, editor.playback]);
 
 	// Playback events → update playhead position and auto-scroll during playback.
 	useEffect(() => {
@@ -97,5 +119,7 @@ export function useTimelinePlayhead({
 	return {
 		handlePlayheadMouseDown: ctrl.onPlayheadMouseDown,
 		handleRulerMouseDown: ctrl.onRulerMouseDown,
+		notifyUserScrolled: ctrl.notifyUserScrolled,
+		wasLastScrollProgrammatic: ctrl.wasLastScrollProgrammatic,
 	};
 }
