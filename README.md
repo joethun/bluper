@@ -10,6 +10,15 @@ This is a fork of Opencut Classic that fixes bugs and adds a bunch of missing fe
 
 </div>
 
+## Features Added
+- Freeze Frame
+- Transitions
+- Fade in and out
+- Adjust
+- Effects
+- Minor UI changes
+- Numerous bug fixes
+
 ## Why?
 
 - **Privacy**: Your videos stay on your device
