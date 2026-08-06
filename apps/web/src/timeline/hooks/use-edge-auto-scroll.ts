@@ -2,6 +2,14 @@ import { useEffect, useRef } from "react";
 
 interface UseEdgeAutoScrollParams {
 	isActive: boolean;
+	/**
+	 * Per-frame liveness check. Defaults to `true` once `isActive` is true.
+	 * Callers that distinguish "click-and-hold" from "actually dragging" (e.g.
+	 * the playhead) pass a getter that returns false until movement has been
+	 * observed, so the initial click position is not treated as a near-edge
+	 * cursor and the timeline does not scroll while the user is holding still.
+	 */
+	getIsActive?: () => boolean;
 	getMouseClientX: () => number;
 	rulerScrollRef: React.RefObject<HTMLDivElement | null>;
 	tracksScrollRef: React.RefObject<HTMLDivElement | null>;
@@ -12,6 +20,7 @@ interface UseEdgeAutoScrollParams {
 
 export function useEdgeAutoScroll({
 	isActive,
+	getIsActive,
 	getMouseClientX,
 	rulerScrollRef,
 	tracksScrollRef,
@@ -31,6 +40,11 @@ export function useEdgeAutoScroll({
 		}
 
 		const step = () => {
+			if (getIsActive && !getIsActive()) {
+				rafRef.current = requestAnimationFrame(step);
+				return;
+			}
+
 			const rulerViewport = rulerScrollRef.current;
 			const tracksViewport = tracksScrollRef.current;
 			if (!rulerViewport || !tracksViewport) {
@@ -87,6 +101,7 @@ export function useEdgeAutoScroll({
 		};
 	}, [
 		isActive,
+		getIsActive,
 		getMouseClientX,
 		rulerScrollRef,
 		tracksScrollRef,

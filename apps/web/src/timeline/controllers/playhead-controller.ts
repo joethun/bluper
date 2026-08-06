@@ -102,6 +102,12 @@ function pixelToTime({
 
 export class PlayheadController {
 	private lastMouseClientX = 0;
+	/**
+	 * True once the mouse has moved during a scrub. Cleared on mousedown so
+	 * that holding the click still near a viewport edge does not cause the
+	 * edge auto-scroll loop to drag the timeline while the user is stationary.
+	 */
+	private dragStarted = false;
 
 	private session: Session = { kind: "idle" };
 	private readonly configRef: PlayheadConfigRef;
@@ -129,6 +135,14 @@ export class PlayheadController {
 		return this.lastMouseClientX;
 	}
 
+	/**
+	 * True only once a scrub is active *and* the mouse has actually moved.
+	 * Used by edge auto-scroll to distinguish a held click from a real drag.
+	 */
+	isDraggingScrub(): boolean {
+		return this.session.kind === "scrubbing" && this.dragStarted;
+	}
+
 	destroy(): void {
 		this.deactivate();
 	}
@@ -138,6 +152,7 @@ export class PlayheadController {
 	onPlayheadMouseDown(event: ReactMouseEvent): void {
 		event.preventDefault();
 		event.stopPropagation();
+		this.dragStarted = false;
 		this.session = {
 			kind: "scrubbing",
 			currentTime: null,
@@ -154,6 +169,7 @@ export class PlayheadController {
 		if (this.config.getPlayheadEl()?.contains(event.target as Node)) return;
 
 		event.preventDefault();
+		this.dragStarted = false;
 		this.session = {
 			kind: "scrubbing",
 			currentTime: null,
@@ -342,6 +358,7 @@ export class PlayheadController {
 	private handleMouseMove(event: MouseEvent): void {
 		if (this.session.kind !== "scrubbing") return;
 
+		this.dragStarted = true;
 		// Kept eager: edge auto-scroll polls this every frame.
 		this.lastMouseClientX = event.clientX;
 		this.pendingClientX = event.clientX;

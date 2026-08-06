@@ -82,6 +82,7 @@ export function useTimelinePlayhead({
 
 	useEdgeAutoScroll({
 		isActive: isScrubbing,
+		getIsActive: () => ctrl.isDraggingScrub(),
 		getMouseClientX: () => ctrl.getLastMouseClientX(),
 		rulerScrollRef,
 		tracksScrollRef,
