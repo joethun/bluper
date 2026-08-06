@@ -1,6 +1,14 @@
-# Bluper
+<div align="center">
 
-This is a fork of Opencut Classic that adds a bunch of missing features that are in CapCut.
+<img src="apps/web/public/logos/bluper/svg/logotext.svg" alt="Bluper" width="500"/>
+
+-----
+
+<a href="https://bluper.netlify.app">bluper.netlify.app</a>
+
+This is a fork of Opencut Classic that adds a bunch of missing features that are in CapCut. **It is not ready for actual use.** 
+
+</div>
 
 ## Why?
 
