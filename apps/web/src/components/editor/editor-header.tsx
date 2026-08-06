@@ -104,13 +104,13 @@ function ProjectDropdown() {
 		<>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
-					<Button variant="ghost" size="icon" className="p-1 rounded-sm size-8">
+					<Button variant="ghost" size="icon" className="p-1 rounded-sm size-10">
 						<Image
 							src={DEFAULT_LOGO_URL}
 							alt="Project thumbnail"
-							width={32}
-							height={32}
-							className="invert dark:invert-0 size-5"
+							width={135}
+							height={125}
+							className="size-8"
 						/>
 					</Button>
 				</DropdownMenuTrigger>

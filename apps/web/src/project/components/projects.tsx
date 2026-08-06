@@ -316,18 +316,18 @@ function ProjectsHeader({
 			>
 				<div className="flex items-center gap-1">
 					{/*
-					 * Mirrors the editor header's logo exactly — a `size-8` box with
-					 * `p-1` around a `size-5` mark — so the mark lands on the same pixel
+					 * Mirrors the editor header's logo exactly — a `size-10` box with
+					 * `p-1` around a `size-8` mark — so the mark lands on the same pixel
 					 * on both pages. It is only a box there because the editor wraps it
 					 * in a dropdown trigger; here there is nothing to exit to.
 					 */}
-					<div className="flex size-8 shrink-0 items-center justify-center p-1">
+					<div className="flex size-10 shrink-0 items-center justify-center p-1">
 						<Image
 							src={DEFAULT_LOGO_URL}
 							alt="Bluper"
-							width={32}
-							height={32}
-							className="size-5 invert dark:invert-0"
+							width={135}
+							height={125}
+							className="size-8"
 							priority
 						/>
 					</div>

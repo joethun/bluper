@@ -7,7 +7,7 @@ export const SITE_INFO = {
 	url: SITE_URL,
 	openGraphImage: "/open-graph/default.jpg",
 	twitterImage: "/open-graph/default.jpg",
-	favicon: "/favicon.ico",
+	favicon: "/favicon.svg",
 };
 
 export const DEFAULT_LOGO_URL = "/logos/bluper/svg/logo.svg";

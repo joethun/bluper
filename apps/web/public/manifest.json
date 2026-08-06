@@ -5,6 +5,11 @@
 	"start_url": "/",
 	"icons": [
 		{
+			"src": "/favicon.svg",
+			"sizes": "any",
+			"type": "image\/svg+xml"
+		},
+		{
 			"src": "/icons/android-icon-36x36.png",
 			"sizes": "36x36",
 			"type": "image\/png",
