@@ -13,6 +13,9 @@ node_modules
 # cursor
 bun.lockb
 
+# wasm-pack regenerates this on every build; ignore it so the pkg stays tracked
+rust/wasm/pkg/.gitignore
+
 # content-collections
 .content-collections
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isShallowEqual, trackManagerAccess } from "../snapshot-cache";
-import { MANAGER_KEYS } from "../manager-tracking";
+import { MANAGER_KEYS, type ManagerKey } from "../manager-tracking";
 
 describe("isShallowEqual", () => {
 	test("Object.is primitives short-circuit", () => {
@@ -92,7 +92,7 @@ describe("trackManagerAccess", () => {
 
 	test("a selector that reads nothing records no managers", () => {
 		const editor = {};
-		const accessed = new Set<string>();
+		const accessed = new Set<ManagerKey>();
 		trackManagerAccess({
 			editor,
 			selector: () => 42,
@@ -107,13 +107,13 @@ describe("trackManagerAccess", () => {
 		const editor = Object.fromEntries(
 			MANAGER_KEYS.map((key) => [key, { id: key }]),
 		);
-		const accessed = new Set<string>();
+		const accessed = new Set<ManagerKey>();
 
 		for (const key of MANAGER_KEYS) {
 			trackManagerAccess({
 				editor,
 				selector: (e) => {
-					// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion, @typescript-eslint/no-unsafe-member-access
+					// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
 					return (e as Record<string, { id: string }>)[key].id;
 				},
 				accessed,
@@ -130,18 +130,19 @@ describe("trackManagerAccess", () => {
 			playback: {},
 			other: "ignore me",
 		};
-		const accessed = new Set<string>();
+		const accessed = new Set<ManagerKey>();
 
 		trackManagerAccess({
 			editor,
 			selector: (e) => {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion, @typescript-eslint/no-unsafe-member-access
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
 				return (e as Record<string, unknown>).other;
 			},
 			accessed,
 		});
 
 		expect(accessed.has("playback")).toBe(false);
-		expect(accessed.has("other")).toBe(false);
+		// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+		expect(accessed.has("other" as ManagerKey)).toBe(false);
 	});
 });
