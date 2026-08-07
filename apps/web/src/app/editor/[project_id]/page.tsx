@@ -15,7 +15,6 @@ import { EditorProvider } from "@/components/providers/editor-provider";
 import { MigrationDialog } from "@/project/components/migration-dialog";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
-import { MobileGate } from "@/components/editor/mobile-gate";
 import { useMemo, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { XIcon } from "lucide-react";
@@ -38,18 +37,16 @@ export default function Editor() {
 	const projectId = params.project_id as string;
 
 	return (
-		<MobileGate>
-			<EditorProvider projectId={projectId}>
-				<div className="bg-background flex h-screen w-screen flex-col overflow-hidden">
-					<DegradedRendererBanner />
-					<EditorHeader />
+		<EditorProvider projectId={projectId}>
+			<div className="bg-background flex h-screen w-screen flex-col overflow-hidden">
+				<DegradedRendererBanner />
+				<EditorHeader />
 				<div className="min-h-0 min-w-0 flex-1">
 					<EditorLayout />
 				</div>
 				<MigrationDialog />
 			</div>
-			</EditorProvider>
-		</MobileGate>
+		</EditorProvider>
 	);
 }
 
