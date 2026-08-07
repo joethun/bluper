@@ -364,6 +364,43 @@ export class AudioManager {
 				this.playbackLatencyCompensationSeconds +
 				(timelineTime - this.playbackStartTime);
 
+			// The iterator's first chunk can land slightly before its requested
+			// source time (mediabunny snaps to packet boundaries) and `playbackStartContextTime`
+			// can be near zero right after the audio context is created, so the
+			// computed `startTimestamp` can be a small negative number. AudioParam
+			// scheduling rejects negative times, so clamp to the current audio
+			// context time and skip into the buffer by the same offset.
+			const lateOffset =
+				startTimestamp < audioContext.currentTime
+					? audioContext.currentTime - startTimestamp
+					: 0;
+			const actualStartTimestamp = startTimestamp + lateOffset;
+
+			if (lateOffset >= buffer.duration) {
+				consecutiveDroppedBufferCount += 1;
+				if (consecutiveDroppedBufferCount >= 5) {
+					const nextCompensationSeconds = Math.max(
+						this.playbackLatencyCompensationSeconds,
+						Math.min(0.25, lateOffset + 0.01),
+					);
+					if (
+						nextCompensationSeconds >
+						this.playbackLatencyCompensationSeconds + 0.001
+					) {
+						this.playbackLatencyCompensationSeconds = nextCompensationSeconds;
+					}
+					const resyncStartTime = this.getPlaybackTime();
+					this.clipIterators.delete(clip.id);
+					void this.runClipIterator({
+						clip,
+						startTime: resyncStartTime,
+						sessionId,
+					});
+					return;
+				}
+				continue;
+			}
+
 			// Fade the chunk's gain envelope in at the clip's head (if this is
 			// the first chunk) and out at the clip's tail (if this chunk crosses
 			// it). A streamed chunk's boundary does not line up with the cut, so
@@ -377,46 +414,15 @@ export class AudioManager {
 			const chunkEndTimestamp = startTimestamp + buffer.duration / playbackRate;
 			this.scheduleChunkGainEnvelope({
 				clipGain,
-				startTimestamp,
+				startTimestamp: actualStartTimestamp,
 				chunkEndTimestamp,
 				clipEndTimestamp,
 				volume: clip.volume,
 				applyFadeIn: timelineTime - clip.startTime < MICRO_FADE_SECONDS,
 			});
 
-			if (startTimestamp >= audioContext.currentTime) {
-				node.start(startTimestamp);
-				consecutiveDroppedBufferCount = 0;
-			} else {
-				const offset = audioContext.currentTime - startTimestamp;
-				if (offset < buffer.duration) {
-					node.start(audioContext.currentTime, offset);
-					consecutiveDroppedBufferCount = 0;
-				} else {
-					consecutiveDroppedBufferCount += 1;
-					if (consecutiveDroppedBufferCount >= 5) {
-						const nextCompensationSeconds = Math.max(
-							this.playbackLatencyCompensationSeconds,
-							Math.min(0.25, offset + 0.01),
-						);
-						if (
-							nextCompensationSeconds >
-							this.playbackLatencyCompensationSeconds + 0.001
-						) {
-							this.playbackLatencyCompensationSeconds = nextCompensationSeconds;
-						}
-						const resyncStartTime = this.getPlaybackTime();
-						this.clipIterators.delete(clip.id);
-						void this.runClipIterator({
-							clip,
-							startTime: resyncStartTime,
-							sessionId,
-						});
-						return;
-					}
-					continue;
-				}
-			}
+			node.start(actualStartTimestamp, lateOffset);
+			consecutiveDroppedBufferCount = 0;
 
 			this.queuedSources.add(node);
 			node.addEventListener("ended", () => {
@@ -588,13 +594,19 @@ export class AudioManager {
 		volume: number;
 		applyFadeIn: boolean;
 	}): void {
-		clipGain.gain.cancelScheduledValues(startTimestamp);
+		// AudioParam scheduling rejects negative times, and the iterator can
+		// pass a small negative value when the first chunk arrives before the
+		// audio context has had time to advance from zero. Clamp here as a
+		// safety net so a miss elsewhere cannot poison playback.
+		const safeStartTimestamp = Math.max(0, startTimestamp);
+
+		clipGain.gain.cancelScheduledValues(safeStartTimestamp);
 
 		if (applyFadeIn) {
-			clipGain.gain.setValueAtTime(0, startTimestamp);
-			clipGain.gain.linearRampToValueAtTime(volume, startTimestamp + MICRO_FADE_SECONDS);
+			clipGain.gain.setValueAtTime(0, safeStartTimestamp);
+			clipGain.gain.linearRampToValueAtTime(volume, safeStartTimestamp + MICRO_FADE_SECONDS);
 		} else {
-			clipGain.gain.setValueAtTime(volume, startTimestamp);
+			clipGain.gain.setValueAtTime(volume, safeStartTimestamp);
 		}
 
 		// The chunk crosses the clip's fade-out window, so ramp to silence by
@@ -604,8 +616,8 @@ export class AudioManager {
 		if (chunkEndTimestamp >= clipEndTimestamp - MICRO_FADE_SECONDS) {
 			const fadeOutStart = clipEndTimestamp - MICRO_FADE_SECONDS;
 			const holdStart = applyFadeIn
-				? Math.max(startTimestamp + MICRO_FADE_SECONDS, fadeOutStart)
-				: Math.max(startTimestamp, fadeOutStart);
+				? Math.max(safeStartTimestamp + MICRO_FADE_SECONDS, fadeOutStart)
+				: Math.max(safeStartTimestamp, fadeOutStart);
 			clipGain.gain.setValueAtTime(volume, holdStart);
 			clipGain.gain.linearRampToValueAtTime(0, clipEndTimestamp);
 		}
