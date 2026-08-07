@@ -20,9 +20,18 @@ export interface ExportOptions {
 	includeAudio?: boolean;
 }
 
+/**
+ * What an export produced. Either a reference to a file the export Service
+ * Worker is holding in OPFS (memory-bounded; streams straight to disk on
+ * download), or a Blob for environments without OPFS / Service Workers.
+ */
+export type ExportArtifact =
+	| { kind: "opfs"; id: string }
+	| { kind: "blob"; blob: Blob };
+
 export interface ExportResult {
 	success: boolean;
-	buffer?: ArrayBuffer;
+	artifact?: ExportArtifact;
 	error?: string;
 	cancelled?: boolean;
 }
@@ -53,24 +62,4 @@ export function getExportFileExtension({
 	format: ExportFormat;
 }): string {
 	return `.${format}`;
-}
-
-export function downloadBuffer({
-	buffer,
-	filename,
-	mimeType,
-}: {
-	buffer: ArrayBuffer;
-	filename: string;
-	mimeType: string;
-}): void {
-	const blob = new Blob([buffer], { type: mimeType });
-	const url = URL.createObjectURL(blob);
-	const downloadLink = document.createElement("a");
-	downloadLink.href = url;
-	downloadLink.download = filename;
-	document.body.appendChild(downloadLink);
-	downloadLink.click();
-	document.body.removeChild(downloadLink);
-	URL.revokeObjectURL(url);
 }

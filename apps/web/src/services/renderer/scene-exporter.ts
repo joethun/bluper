@@ -4,7 +4,7 @@ import {
 	Output,
 	Mp4OutputFormat,
 	WebMOutputFormat,
-	BufferTarget,
+	StreamTarget,
 	CanvasSource,
 	AudioBufferSource,
 	QUALITY_LOW,
@@ -12,12 +12,15 @@ import {
 	QUALITY_HIGH,
 	QUALITY_VERY_HIGH,
 } from "mediabunny";
+import type { StreamTargetChunk } from "mediabunny";
 import type { FrameRate } from "opencut-wasm";
 import { mediaTimeToSeconds } from "opencut-wasm";
 import { TICKS_PER_SECOND } from "@/wasm";
 import { frameRateToFloat } from "@/fps/utils";
+import type { ExportArtifact, ExportFormat, ExportQuality } from "@/export";
+import { OPFSExportTarget } from "@/services/export/opfs-export-target";
+import { registerExportServiceWorker } from "@/services/export/export-sw-bridge";
 import type { RootNode } from "./nodes/root-node";
-import type { ExportFormat, ExportQuality } from "@/export";
 import { CanvasRenderer } from "./canvas-renderer";
 
 type ExportParams = {
@@ -47,7 +50,7 @@ export type SceneExporterEvents = {
 	 * read it before returning: by the next frame it holds different pixels.
 	 */
 	frame: [source: HTMLCanvasElement];
-	complete: [buffer: ArrayBuffer];
+	complete: [artifact: ExportArtifact];
 	error: [error: Error];
 	cancelled: [];
 };
@@ -99,7 +102,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		rootNode,
 	}: {
 		rootNode: RootNode;
-	}): Promise<ArrayBuffer | null> {
+	}): Promise<ExportArtifact | null> {
 		const fps = this.renderer.fps;
 		const fpsFloat = frameRateToFloat(fps);
 		const ticksPerFrame = Math.round(
@@ -110,9 +113,16 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		const outputFormat =
 			this.format === "webm" ? new WebMOutputFormat() : new Mp4OutputFormat();
 
+		const opfsHandle = await this.tryCreateOPFSTarget();
+		const fallback = new CollectingWritableStream();
+		const writable: WritableStream<StreamTargetChunk> = opfsHandle
+			? opfsHandle.writableStream
+			: fallback;
+		const target = new StreamTarget(writable, { chunked: true });
+
 		const output = new Output({
 			format: outputFormat,
-			target: new BufferTarget(),
+			target,
 		});
 
 		const outputCanvas = this.renderer.getOutputCanvas();
@@ -156,6 +166,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		for (let i = 0; i < frameCount; i++) {
 			if (this.isCancelled) {
 				await output.cancel();
+				if (opfsHandle) await opfsHandle.dispose();
 				this.emit("cancelled");
 				return null;
 			}
@@ -185,6 +196,7 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 		if (this.isCancelled) {
 			await output.cancel();
+			if (opfsHandle) await opfsHandle.dispose();
 			this.emit("cancelled");
 			return null;
 		}
@@ -193,13 +205,69 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		await output.finalize();
 		this.emit("progress", 1);
 
-		const buffer = output.target.buffer;
-		if (!buffer) {
+		const artifact: ExportArtifact | null = opfsHandle
+			? { kind: "opfs", id: opfsHandle.id }
+			: (() => {
+					const blob = fallback.toBlob();
+					return blob ? { kind: "blob", blob } : null;
+				})();
+
+		if (!artifact) {
+			if (opfsHandle) await opfsHandle.dispose();
 			this.emit("error", new Error("Failed to export video"));
 			return null;
 		}
 
-		this.emit("complete", buffer);
-		return buffer;
+		this.emit("complete", artifact);
+		return artifact;
+	}
+
+	/**
+	 * Probes OPFS + Service Worker support and, if both are available, opens a
+	 * target file the encoders can stream into. The OPFS path is what removes
+	 * the 4 GB ArrayBuffer ceiling: each chunk is written to disk as it's
+	 * produced, and the Service Worker hands the file back to the user on
+	 * download without materialising it in memory.
+	 */
+	private async tryCreateOPFSTarget() {
+		if (!OPFSExportTarget.isSupported()) return null;
+		const swStatus = await registerExportServiceWorker();
+		if (swStatus !== "ready") return null;
+		try {
+			return await OPFSExportTarget.create();
+		} catch (error) {
+			console.warn("OPFS export target unavailable, using Blob fallback:", error);
+			return null;
+		}
+	}
+}
+
+/**
+ * WritableStream that accumulates chunks into a single Blob, used as the
+ * fallback when OPFS isn't available. The total output is still bounded by
+ * available memory but a single Blob is no longer backed by one big
+ * ArrayBuffer allocation, so it sidesteps the 4 GB `BufferTarget` ceiling
+ * that was the original error.
+ */
+class CollectingWritableStream extends WritableStream<StreamTargetChunk> {
+	private readonly chunks: BlobPart[] = [];
+
+	constructor() {
+		super({
+			write: (chunk) => {
+				// Medibunny's `chunked: true` mode already gives us 16 MiB slices
+				// at a time, so each write here is a bounded copy. We still copy
+				// because the underlying buffer of a WritableStream's chunk can be
+				// reused by the producer after `write` resolves.
+				const slice = new Uint8Array(chunk.data.byteLength);
+				slice.set(chunk.data);
+				this.chunks.push(slice);
+			},
+		});
+	}
+
+	toBlob(): Blob | null {
+		if (this.chunks.length === 0) return null;
+		return new Blob(this.chunks, { type: "application/octet-stream" });
 	}
 }

@@ -249,20 +249,20 @@ export class RendererManager {
 			const cancelInterval = setInterval(checkCancel, 100);
 
 			try {
-				const buffer = await exporter.export({ rootNode: scene });
+				const artifact = await exporter.export({ rootNode: scene });
 				clearInterval(cancelInterval);
 
 				if (cancelled) {
 					return { success: false, cancelled: true };
 				}
 
-				if (!buffer) {
-					return { success: false, error: "Export failed to produce buffer" };
+				if (!artifact) {
+					return { success: false, error: "Export failed to produce a file" };
 				}
 
 				return {
 					success: true,
-					buffer,
+					artifact,
 				};
 			} finally {
 				clearInterval(cancelInterval);

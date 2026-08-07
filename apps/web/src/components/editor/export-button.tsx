@@ -12,11 +12,10 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Progress } from "@/components/ui/progress";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/utils/ui";
-import {
-	getExportMimeType,
-	getExportFileExtension,
-	downloadBuffer,
-} from "@/export";
+import { toast } from "sonner";
+import { downloadBlob } from "@/utils/browser";
+import { triggerOPFSDownload } from "@/services/export/export-sw-bridge";
+import { getExportMimeType, getExportFileExtension } from "@/export";
 import { ArrowUpFromLineIcon, CheckIcon, CopyIcon, DownloadIcon, RotateCcwIcon } from "lucide-react";
 import {
 	EXPORT_FORMAT_VALUES,
@@ -154,12 +153,34 @@ function ExportPopover({
 			return;
 		}
 
-		if (result.success && result.buffer) {
-			downloadBuffer({
-				buffer: result.buffer,
-				filename: `${activeProject.metadata.name}${getExportFileExtension({ format })}`,
-				mimeType: getExportMimeType({ format }),
-			});
+		if (result.success && result.artifact) {
+			const filename = `${activeProject.metadata.name}${getExportFileExtension({ format })}`;
+			const mimeType = getExportMimeType({ format });
+
+			if (result.artifact.kind === "opfs") {
+				try {
+					await triggerOPFSDownload({
+						id: result.artifact.id,
+						filename,
+						mimeType,
+					});
+				} catch (error) {
+					// The file is already in OPFS; the SW just couldn't be reached.
+					// Most likely cause is a missing controller on a freshly opened
+					// tab. Log and let the user retry — the file will be reaped
+					// by the SW's stale sweep.
+					console.error("Failed to trigger OPFS download:", error);
+					toast.error(
+						error instanceof Error
+							? error.message
+							: "Could not start the download",
+					);
+					editor.project.clearExportState();
+					return;
+				}
+			} else {
+				downloadBlob({ blob: result.artifact.blob, filename });
+			}
 
 			editor.project.clearExportState();
 			onOpenChange(false);
@@ -355,7 +376,7 @@ function ExportError({
 					onClick={handleCopy}
 				>
 					{copied ? <CheckIcon className="text-constructive" /> : <CopyIcon />}
-					CopyIcon
+					Copy Error
 				</Button>
 				<Button
 					variant="outline"

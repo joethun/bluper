@@ -15,10 +15,11 @@ import { EditorProvider } from "@/components/providers/editor-provider";
 import { MigrationDialog } from "@/project/components/migration-dialog";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useEditor } from "@/editor/use-editor";
 import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { registerExportServiceWorker } from "@/services/export/export-sw-bridge";
 import {
 	createPreviewOverlayControl,
 	isPreviewOverlayVisible,
@@ -35,6 +36,15 @@ import {
 export default function Editor() {
 	const params = useParams();
 	const projectId = params.project_id as string;
+
+	// Install the export Service Worker as soon as the editor mounts. It's
+	// what serves OPFS-backed exports to the browser as downloads, so the
+	// registration has to be in flight (and the SW controlling the page)
+	// before the first export finishes — otherwise the first download
+	// would race the install and silently 404.
+	useEffect(() => {
+		registerExportServiceWorker();
+	}, []);
 
 	return (
 		<EditorProvider projectId={projectId}>
