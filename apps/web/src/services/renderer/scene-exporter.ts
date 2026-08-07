@@ -19,7 +19,7 @@ import { TICKS_PER_SECOND } from "@/wasm";
 import { frameRateToFloat } from "@/fps/utils";
 import type { ExportArtifact, ExportFormat, ExportQuality } from "@/export";
 import { OPFSExportTarget } from "@/services/export/opfs-export-target";
-import { registerExportServiceWorker } from "@/services/export/export-sw-bridge";
+import { getExportServiceWorkerStatus } from "@/services/export/export-sw-bridge";
 import type { RootNode } from "./nodes/root-node";
 import { CanvasRenderer } from "./canvas-renderer";
 
@@ -228,11 +228,18 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	 * the 4 GB ArrayBuffer ceiling: each chunk is written to disk as it's
 	 * produced, and the Service Worker hands the file back to the user on
 	 * download without materialising it in memory.
+	 *
+	 * Crucially this does NOT await SW registration — the registration is
+	 * kicked off on editor mount and may still be in flight when the user
+	 * clicks Export. Awaiting it would block the export on the SW install
+	 * (potentially seconds) and leave the progress bar pinned at 0%. Instead
+	 * we read the cached status synchronously; if the SW isn't ready, this
+	 * export uses the Blob path. The next export will get the OPFS path
+	 * once the SW is in place.
 	 */
 	private async tryCreateOPFSTarget() {
 		if (!OPFSExportTarget.isSupported()) return null;
-		const swStatus = await registerExportServiceWorker();
-		if (swStatus !== "ready") return null;
+		if (getExportServiceWorkerStatus() !== "ready") return null;
 		try {
 			return await OPFSExportTarget.create();
 		} catch (error) {
