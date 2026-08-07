@@ -487,7 +487,6 @@ function usePreviewSourceUrl({
 	element: EffectableElement;
 }): string | undefined {
 	const editor = useEditor();
-	useEditor((e) => e.media.getAssets());
 
 	const mediaId = "mediaId" in element ? element.mediaId : undefined;
 	if (!mediaId) {

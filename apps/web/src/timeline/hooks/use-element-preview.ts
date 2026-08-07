@@ -18,9 +18,8 @@ export function useElementPreview<T extends TimelineElement>({
 	fallback: T;
 }) {
 	const editor = useEditor();
-	useEditor((e) => e.timeline.getPreviewTracks());
+	const previewTracks = useEditor((e) => e.timeline.getPreviewTracks());
 
-	const previewTracks = editor.timeline.getPreviewTracks();
 	const renderElement =
 		(findTrackInSceneTracks({
 			tracks: previewTracks ?? editor.scenes.getActiveScene().tracks,

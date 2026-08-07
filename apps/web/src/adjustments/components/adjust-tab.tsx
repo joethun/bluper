@@ -11,6 +11,7 @@ import {
 import { PanelHeader } from "@/components/editor/panels/panel-header";
 import { ElementParamField } from "@/components/editor/panels/properties/components/element-params-tab";
 import { useElementPlayhead } from "@/components/editor/panels/properties/hooks/use-element-playhead";
+import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import { Button } from "@/components/ui/button";
 import {
 	Tooltip,
@@ -95,8 +96,16 @@ function ParamGroupsTab({
 		startTime: element.startTime,
 		duration: element.duration,
 	});
+	const { renderElement } = useElementPreview({
+		trackId,
+		elementId: element.id,
+		fallback: element,
+	});
 	const paramByKey = new Map(
-		getElementParams({ element }).map((param) => [param.key, param]),
+		getElementParams({ element: renderElement }).map((param) => [
+			param.key,
+			param,
+		]),
 	);
 
 	return (
@@ -107,6 +116,7 @@ function ParamGroupsTab({
 					<AdjustGroup
 						key={group.title}
 						element={element}
+						renderElement={renderElement}
 						trackId={trackId}
 						title={group.title}
 						params={group.keys
@@ -125,6 +135,7 @@ function ParamGroupsTab({
 
 function AdjustGroup({
 	element,
+	renderElement,
 	trackId,
 	title,
 	params,
@@ -132,6 +143,7 @@ function AdjustGroup({
 	isPlayheadWithinElementRange,
 }: {
 	element: VisualElement;
+	renderElement: VisualElement;
 	trackId: string;
 	title: string;
 	params: ElementParamDefinition[];
@@ -145,7 +157,7 @@ function AdjustGroup({
 	}
 
 	const readValue = ({ param }: { param: ElementParamDefinition }) =>
-		readElementParamValue({ element, param }) ?? param.default;
+		readElementParamValue({ element: renderElement, param }) ?? param.default;
 
 	const isPristine = params.every(
 		(param) => readValue({ param }) === param.default,
@@ -193,7 +205,7 @@ function AdjustGroup({
 					{params.map((param) => (
 						<ElementParamField
 							key={param.key}
-							element={element}
+							element={renderElement}
 							trackId={trackId}
 							param={param}
 							baseValue={readValue({ param })}

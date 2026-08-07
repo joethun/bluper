@@ -17,8 +17,6 @@ import { EmptyView } from "./empty-view";
 
 export function PropertiesPanel() {
 	const editor = useEditor();
-	useEditor((e) => e.scenes.getActiveSceneOrNull());
-	useEditor((e) => e.media.getAssets());
 	const { selectedElements } = useElementSelection();
 	const { activeTabPerType, setActiveTab } = usePropertiesStore();
 
