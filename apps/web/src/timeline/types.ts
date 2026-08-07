@@ -210,7 +210,7 @@ export interface ImageElement extends BaseTimelineElement {
 export interface TextElement extends BaseTimelineElement {
 	type: "text";
 	hidden?: boolean;
-	effects?: Effect[];
+	fade?: FadeConfig;
 }
 
 export interface StickerElement extends BaseTimelineElement {
@@ -305,11 +305,11 @@ export type TransitionableElement = Extract<
 >;
 
 /**
- * Fading needs no neighbour, so any clip with pixels of its own can do it — but
- * only the media types are wired up so far, since the others resolve their
- * opacity on separate paths.
+ * Fading needs no neighbour, so any clip with pixels of its own can do it — the
+ * stickers and shapes are still outstanding, since they resolve their opacity on
+ * separate paths.
  */
-const _FADEABLE_ELEMENT_TYPES = elementTypes("video", "image");
+const _FADEABLE_ELEMENT_TYPES = elementTypes("video", "image", "text");
 
 export type FadeableElement = Extract<
 	TimelineElement,
@@ -346,6 +346,23 @@ export const VISUAL_ELEMENT_TYPES = elementTypes(
 export type VisualElement = Extract<
 	TimelineElement,
 	{ type: (typeof VISUAL_ELEMENT_TYPES)[number] }
+>;
+
+/**
+ * The types the Effects panel stacks passes onto. Text is deliberately absent:
+ * its look is authored outright in the Text panel, and a pass laid over the
+ * glyphs fights that rather than adding to it.
+ */
+export const EFFECTABLE_ELEMENT_TYPES = elementTypes(
+	"video",
+	"image",
+	"sticker",
+	"graphic",
+);
+
+export type EffectableElement = Extract<
+	TimelineElement,
+	{ type: (typeof EFFECTABLE_ELEMENT_TYPES)[number] }
 >;
 
 export type CreateUploadAudioElement = Omit<UploadAudioElement, "id">;
@@ -415,4 +432,12 @@ export interface ComputeDropTargetParams {
 	startTimeOverride?: MediaTime;
 	excludeElementId?: string;
 	targetElementTypes?: string[];
+	/**
+	 * The track the element being dragged currently lives on. When the resolver
+	 * would otherwise create a new track that gets redirected (e.g. dragging a
+	 * clip on the main video track down past it), the resolver falls back to
+	 * this track instead — so a small downward jiggle doesn't mint a brand new
+	 * track above main.
+	 */
+	sourceTrackId?: string;
 }

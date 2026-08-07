@@ -419,6 +419,52 @@ describe("resolveTrackPlacement", () => {
 		});
 	});
 
+	test("non-audio new tracks never land below the main track", () => {
+		const tracks = buildSceneTracks({
+			overlay: [buildTrack({ id: "text-1", type: "text" })],
+			main: buildTrack({ id: "video-main", type: "video" }),
+			audio: [buildTrack({ id: "audio-1", type: "audio" })],
+		});
+
+		expect(
+			resolveTrackPlacement({
+				tracks,
+				elementType: "video",
+				timeSpans: [buildTimeSpan({ startTime: 0, duration: 2 })],
+				strategy: {
+					type: "preferIndex",
+					trackIndex: 2,
+					hoverDirection: "below",
+					verticalDragDirection: "down",
+				},
+			}),
+		).toEqual({
+			kind: "newTrack",
+			trackType: "video",
+			insertIndex: 1,
+			insertPosition: "above",
+		});
+
+		expect(
+			resolveTrackPlacement({
+				tracks,
+				elementType: "image",
+				timeSpans: [buildTimeSpan({ startTime: 0, duration: 2 })],
+				strategy: {
+					type: "preferIndex",
+					trackIndex: 2,
+					hoverDirection: "above",
+					verticalDragDirection: "up",
+				},
+			}),
+		).toEqual({
+			kind: "newTrack",
+			trackType: "video",
+			insertIndex: 1,
+			insertPosition: "above",
+		});
+	});
+
 	test("preferIndex keeps audio tracks below the main track", () => {
 		const tracks = buildSceneTracks({
 			overlay: [buildTrack({ id: "text-1", type: "text" })],
@@ -666,6 +712,34 @@ describe("resolveTrackPlacement", () => {
 			trackType: "audio",
 			insertIndex: 2,
 			insertPosition: "below",
+		});
+	});
+
+	test("preferIndex falls back to the source track when a non-audio redirect would mint a new track", () => {
+		const tracks = buildSceneTracks({
+			overlay: [buildTrack({ id: "text-1", type: "text" })],
+			main: buildTrack({ id: "video-main", type: "video" }),
+			audio: [buildTrack({ id: "audio-1", type: "audio" })],
+		});
+
+		expect(
+			resolveTrackPlacement({
+				tracks,
+				elementType: "video",
+				timeSpans: [buildTimeSpan({ startTime: 0, duration: 2 })],
+				strategy: {
+					type: "preferIndex",
+					trackIndex: 2,
+					hoverDirection: "below",
+					verticalDragDirection: "down",
+				},
+				sourceTrackId: "video-main",
+			}),
+		).toEqual({
+			kind: "existingTrack",
+			trackId: "video-main",
+			trackIndex: 1,
+			trackType: "video",
 		});
 	});
 });

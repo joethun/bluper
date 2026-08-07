@@ -540,7 +540,7 @@ impl GpuContext {
                 .expect("Failed to get 2d context for texture import")
                 .unchecked_into();
             let image_data = ctx
-                .get_image_data(0.0, 0.0, width as f64, height as f64)
+                .get_image_data(0_i32, 0_i32, width as i32, height as i32)
                 .expect("Failed to read pixel data from canvas");
             let rgba_bytes = image_data.data();
 
@@ -574,6 +574,83 @@ impl GpuContext {
                 },
             );
         }
+
+        texture
+    }
+
+    /// Imports a `VideoFrame` into a GPU texture.
+    ///
+    /// The path is: draw the WebCodecs frame into an `OffscreenCanvas`, read
+    /// the pixels out, then `write_texture` the bytes to the GPU. The draw
+    /// is GPU-accelerated in every browser that has WebCodecs, so the only
+    /// CPU cost here is the `getImageData` readback — the same shape as the
+    /// existing `import_offscreen_canvas_texture` fallback for backends
+    /// that lack `copyExternalImageToTexture`.
+    ///
+    /// We intentionally don't use `copyExternalImageToTexture` with a
+    /// `VideoFrame` source even when `supports_external_texture_copies`
+    /// reports success: the underlying browser validation is stricter than
+    /// the downlevel flag suggests, and the call panics with a
+    /// `UNRESTRICTED_EXTERNAL_TEXTURE_COPIES` validation error on devices
+    /// where the flag check passes but the WebGPU `VideoFrame` source isn't
+    /// accepted. The unwrap would surface as a console error each frame, so
+    /// the safe path runs every time and we trade a `getImageData` round
+    /// trip for correctness.
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn import_video_frame_texture(
+        &self,
+        video_frame: &wgpu::web_sys::VideoFrame,
+        width: u32,
+        height: u32,
+        label: &'static str,
+    ) -> wgpu::Texture {
+        let texture = self.create_render_texture(width, height, label);
+        let staging = wgpu::web_sys::OffscreenCanvas::new(width, height)
+            .expect("Failed to create staging OffscreenCanvas");
+        let ctx: web_sys::OffscreenCanvasRenderingContext2d = staging
+            .get_context("2d")
+            .ok()
+            .flatten()
+            .expect("Failed to get 2d context for VideoFrame staging")
+            .unchecked_into();
+        ctx.clear_rect(0.0, 0.0, width as f64, height as f64);
+        ctx.draw_image_with_video_frame(video_frame, 0.0, 0.0)
+            .expect("Failed to draw VideoFrame to staging canvas");
+
+        let image_data = ctx
+            .get_image_data(0_i32, 0_i32, width as i32, height as i32)
+            .expect("Failed to read pixel data from VideoFrame staging canvas");
+        let rgba_bytes = image_data.data();
+
+        let pixel_bytes = if self.texture_format == wgpu::TextureFormat::Bgra8Unorm {
+            let mut bytes = rgba_bytes.to_vec();
+            for pixel in bytes.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+            bytes
+        } else {
+            rgba_bytes.to_vec()
+        };
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &pixel_bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
 
         texture
     }

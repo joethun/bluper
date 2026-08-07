@@ -8,6 +8,7 @@ import type {
 	FadeableElement,
 	StickerElement,
 	TextElement,
+	EffectableElement,
 	VisualElement,
 	VideoElement,
 	AudioElement,
@@ -213,7 +214,7 @@ function buildFadeTab({
 function buildClipEffectsTab({
 	element,
 }: {
-	element: VisualElement;
+	element: EffectableElement;
 }): PropertiesTabDef {
 	return {
 		id: "effects",
@@ -283,7 +284,7 @@ function getTextConfig({
 			buildTextTab({ element }),
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
-			buildClipEffectsTab({ element }),
+			buildFadeTab({ element }),
 		],
 	};
 }

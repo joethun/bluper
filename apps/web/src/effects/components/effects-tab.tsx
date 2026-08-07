@@ -31,7 +31,7 @@ import type { Effect, EffectDefinition, EffectGroup } from "@/effects/types";
 import type { ParamValue, ParamValues } from "@/params";
 import { effectPreviewService } from "@/services/renderer/effect-preview";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
-import type { EffectElement, TimelineElement, VisualElement } from "@/timeline";
+import type { EffectElement, TimelineElement, EffectableElement } from "@/timeline";
 import { cn } from "@/utils/ui";
 
 /**
@@ -47,7 +47,7 @@ export function ClipEffectsTab({
 	element,
 	trackId,
 }: {
-	element: VisualElement;
+	element: EffectableElement;
 	trackId: string;
 }) {
 	const editor = useEditor();
@@ -89,7 +89,7 @@ export function ClipEffectsTab({
 						key={effect.id}
 						effect={effect}
 						element={element}
-						renderElement={renderElement as VisualElement}
+						renderElement={renderElement as EffectableElement}
 						trackId={trackId}
 						index={index}
 						stackSize={effects.length}
@@ -176,8 +176,8 @@ function AppliedEffect({
 	onCommit,
 }: {
 	effect: Effect;
-	element: VisualElement;
-	renderElement: VisualElement;
+	element: EffectableElement;
+	renderElement: EffectableElement;
 	trackId: string;
 	index: number;
 	stackSize: number;
@@ -484,7 +484,7 @@ function TilePreview({
 function usePreviewSourceUrl({
 	element,
 }: {
-	element: VisualElement;
+	element: EffectableElement;
 }): string | undefined {
 	const editor = useEditor();
 	useEditor((e) => e.media.getAssets());

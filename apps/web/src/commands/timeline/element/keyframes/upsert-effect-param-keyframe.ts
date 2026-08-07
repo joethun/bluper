@@ -5,7 +5,7 @@ import {
 	upsertPathKeyframe,
 } from "@/animation";
 import { updateElementInSceneTracks } from "@/timeline";
-import { isVisualElement } from "@/timeline/element-utils";
+import { isEffectableElement } from "@/timeline/element-utils";
 import { resolveAnimationTarget } from "@/timeline/animation-targets";
 import type { AnimationInterpolation } from "@/animation/types";
 import type { SceneTracks } from "@/timeline";
@@ -65,7 +65,7 @@ export class UpsertEffectParamKeyframeCommand extends Command {
 			tracks: this.savedState,
 			trackId: this.trackId,
 			elementId: this.elementId,
-			elementPredicate: isVisualElement,
+			elementPredicate: isEffectableElement,
 			update: (element) => {
 				const boundedTime = maxMediaTime({
 					a: ZERO_MEDIA_TIME,

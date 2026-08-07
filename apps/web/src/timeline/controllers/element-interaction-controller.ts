@@ -243,6 +243,7 @@ function resolveDropTarget({
 		startTimeOverride: snappedTime,
 		excludeElementId: movingElement.id,
 		verticalDragDirection,
+		sourceTrackId: trackId,
 	});
 }
 

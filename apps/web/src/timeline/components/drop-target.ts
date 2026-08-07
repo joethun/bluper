@@ -181,6 +181,7 @@ export function computeDropTarget({
 	startTimeOverride,
 	excludeElementId,
 	targetElementTypes,
+	sourceTrackId,
 }: ComputeDropTargetParams): DropTarget {
 	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
 	const xPosition =
@@ -206,6 +207,7 @@ export function computeDropTarget({
 				hoverDirection: "below",
 				createNewTrackOnly: true,
 			},
+			sourceTrackId,
 		});
 		const emptyTimelineResult =
 			placementResult?.kind === "newTrack" ? placementResult : null;
@@ -241,6 +243,7 @@ export function computeDropTarget({
 				hoverDirection: isAboveAllTracks ? "above" : "below",
 				createNewTrackOnly: true,
 			},
+			sourceTrackId,
 		});
 		const outOfBoundsResult =
 			placementResult?.kind === "newTrack" ? placementResult : null;
@@ -291,6 +294,7 @@ export function computeDropTarget({
 			hoverDirection: relativeY < trackHeight / 2 ? "above" : "below",
 			verticalDragDirection,
 		},
+		sourceTrackId,
 	});
 	if (!placementResult) {
 		return fallbackNewTrackDropTarget({ xPosition });

@@ -8,8 +8,8 @@ use js_sys::Object;
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
 
 use crate::gpu::{
-    import_canvas_texture, read_offscreen_canvas_property, read_serde_property, read_u32_property,
-    with_gpu_runtime,
+    import_canvas_texture, import_video_frame_texture, read_offscreen_canvas_property,
+    read_serde_property, read_u32_property, read_video_frame_property, with_gpu_runtime,
 };
 use crate::perf;
 
@@ -137,6 +137,37 @@ pub fn upload_texture(options: JsValue) -> Result<(), JsValue> {
     })
 }
 
+#[wasm_bindgen(js_name = uploadVideoFrame)]
+pub fn upload_video_frame(options: JsValue) -> Result<(), JsValue> {
+    let UploadVideoFrameOptions {
+        id,
+        source,
+        width,
+        height,
+    } = parse_upload_video_frame_options(options)?;
+
+    with_gpu_runtime(|gpu_runtime| {
+        COMPOSITOR_RUNTIME.with(|runtime| {
+            let mut borrow = runtime.borrow_mut();
+            let Some(runtime) = borrow.as_mut() else {
+                return Err(JsValue::from_str(
+                    "Compositor is not initialized. Call initCompositor() first.",
+                ));
+            };
+
+            let texture = import_video_frame_texture(
+                &gpu_runtime.context,
+                &source,
+                width,
+                height,
+                "compositor-upload-video-frame",
+            );
+            runtime.compositor.upsert_texture(id, texture);
+            Ok(())
+        })
+    })
+}
+
 #[wasm_bindgen(js_name = releaseTexture)]
 pub fn release_texture(id: String) -> Result<(), JsValue> {
     COMPOSITOR_RUNTIME.with(|runtime| {
@@ -234,6 +265,27 @@ fn parse_upload_texture_options(value: JsValue) -> Result<UploadTextureOptions, 
     Ok(UploadTextureOptions {
         id: read_serde_property(&object, "id")?,
         source: read_offscreen_canvas_property(&object, "source")?,
+        width: read_u32_property(&object, "width")?,
+        height: read_u32_property(&object, "height")?,
+    })
+}
+
+#[derive(Debug)]
+struct UploadVideoFrameOptions {
+    id: String,
+    source: wgpu::web_sys::VideoFrame,
+    width: u32,
+    height: u32,
+}
+
+fn parse_upload_video_frame_options(value: JsValue) -> Result<UploadVideoFrameOptions, JsValue> {
+    let object: Object = value
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("uploadVideoFrame expects an options object"))?;
+
+    Ok(UploadVideoFrameOptions {
+        id: read_serde_property(&object, "id")?,
+        source: read_video_frame_property(&object, "source")?,
         width: read_u32_property(&object, "width")?,
         height: read_u32_property(&object, "height")?,
     })

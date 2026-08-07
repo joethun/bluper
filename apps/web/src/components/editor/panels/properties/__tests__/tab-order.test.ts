@@ -88,4 +88,9 @@ describe("properties tab order", () => {
 			).toContain(config.defaultTab);
 		}
 	});
+
+	test("text fades but takes no effects", () => {
+		expect(tabIds({ kind: "text" })).toContain("fade");
+		expect(tabIds({ kind: "text" })).not.toContain("effects");
+	});
 });

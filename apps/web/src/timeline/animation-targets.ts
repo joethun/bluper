@@ -25,7 +25,7 @@ import {
 	getElementParam,
 } from "@/params/registry";
 import type { TimelineElement } from "@/timeline";
-import { isVisualElement } from "@/timeline/element-utils";
+import { isEffectableElement } from "@/timeline/element-utils";
 
 export interface AnimationPathDescriptor {
 	channelLayout: ParamChannelLayout;
@@ -140,7 +140,7 @@ function buildEffectParamDescriptor({
 	effectId: string;
 	paramKey: string;
 }): AnimationPathDescriptor | null {
-	if (!isVisualElement(element)) {
+	if (!isEffectableElement(element)) {
 		return null;
 	}
 

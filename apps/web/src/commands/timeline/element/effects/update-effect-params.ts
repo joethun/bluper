@@ -1,18 +1,18 @@
 import { Command, type CommandResult } from "@/commands/base-command";
 import { EditorCore } from "@/core";
-import { isVisualElement, updateElementInSceneTracks } from "@/timeline";
+import { isEffectableElement, updateElementInSceneTracks } from "@/timeline";
 import type { ParamValues } from "@/params";
-import type { SceneTracks, VisualElement } from "@/timeline";
+import type { SceneTracks, EffectableElement } from "@/timeline";
 
 function updateEffectParamsOnElement({
 	element,
 	effectId,
 	params,
 }: {
-	element: VisualElement;
+	element: EffectableElement;
 	effectId: string;
 	params: Partial<ParamValues>;
-}): VisualElement {
+}): EffectableElement {
 	const currentEffects = element.effects ?? [];
 	const updated = currentEffects.map((effect) => {
 		if (effect.id !== effectId) {
@@ -64,10 +64,10 @@ export class UpdateClipEffectParamsCommand extends Command {
 			tracks: this.savedState,
 			trackId: this.trackId,
 			elementId: this.elementId,
-			elementPredicate: isVisualElement,
+			elementPredicate: isEffectableElement,
 			update: (element) => {
 				return updateEffectParamsOnElement({
-					element: element as VisualElement,
+					element: element as EffectableElement,
 					effectId: this.effectId,
 					params: this.params,
 				});

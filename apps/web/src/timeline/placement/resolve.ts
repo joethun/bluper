@@ -133,8 +133,11 @@ function getInsertDirection({
 
 export function resolveTrackPlacement({
 	tracks,
+	sourceTrackId,
 	...placement
-}: ResolveTrackPlacementParams): PlacementResult | null {
+}: ResolveTrackPlacementParams & {
+	sourceTrackId?: string;
+}): PlacementResult | null {
 	const orderedTracks = [...tracks.overlay, tracks.main, ...tracks.audio];
 	const trackType =
 		"trackType" in placement
@@ -207,17 +210,33 @@ export function resolveTrackPlacement({
 			});
 		}
 
-		const { insertIndex, insertPosition } = resolvePreferredNewTrackPlacement({
-			tracks,
-			trackType,
-			preferredIndex: strategy.trackIndex,
-			direction: getInsertDirection({
-				hoverDirection: strategy.hoverDirection,
-				verticalDragDirection: !isPreferredTrackCompatible
-					? strategy.verticalDragDirection
-					: null,
-			}),
-		});
+		const { insertIndex, insertPosition, wasRedirected } =
+			resolvePreferredNewTrackPlacement({
+				tracks,
+				trackType,
+				preferredIndex: strategy.trackIndex,
+				direction: getInsertDirection({
+					hoverDirection: strategy.hoverDirection,
+					verticalDragDirection: !isPreferredTrackCompatible
+						? strategy.verticalDragDirection
+						: null,
+				}),
+			});
+
+		if (wasRedirected && sourceTrackId) {
+			const sourceTrackIndex = orderedTracks.findIndex(
+				(track) => track.id === sourceTrackId && track.type === trackType,
+			);
+			if (sourceTrackIndex >= 0) {
+				return buildExistingTrackResult({
+					track: orderedTracks[sourceTrackIndex],
+					trackIndex: sourceTrackIndex,
+					tracks,
+					timeSpans,
+				});
+			}
+		}
+
 		return buildNewTrackResult({
 			trackType,
 			insertIndex,

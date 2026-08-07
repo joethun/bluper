@@ -1,8 +1,8 @@
 import type {
 	AdjustmentElement,
+	EffectableElement,
 	MaskableElement,
 	TransitionableElement,
-	VisualElement,
 } from "./types";
 import type { ParamValues } from "@/params";
 
@@ -36,7 +36,7 @@ interface GraphicDragData extends BaseDragData {
 interface EffectDragData extends BaseDragData {
 	type: "effect";
 	effectType: string;
-	targetElementTypes: VisualElement["type"][];
+	targetElementTypes: EffectableElement["type"][];
 }
 
 /**

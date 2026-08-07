@@ -193,7 +193,6 @@ function buildTrackNodes({
 						canvasCenter: { x: canvasSize.width / 2, y: canvasSize.height / 2 },
 						canvasHeight: canvasSize.height,
 						textBaseline: "middle",
-						effects: element.effects ?? [],
 					}),
 				);
 			}

@@ -5,7 +5,7 @@ import {
 	resolveFadeOpacity,
 	withFadeEdge,
 } from "@/fades";
-import type { VideoElement } from "@/timeline";
+import type { TextElement, VideoElement } from "@/timeline";
 import { mediaTime, TICKS_PER_SECOND, ZERO_MEDIA_TIME } from "@/wasm";
 
 function seconds({ value }: { value: number }) {
@@ -164,5 +164,24 @@ describe("hasActiveFade", () => {
 				element: buildElement({ fade: { out: seconds({ value: 1 }) } }),
 			}),
 		).toBe(true);
+	});
+
+	test("reads a fade off a text clip", () => {
+		const element: TextElement = {
+			id: "title",
+			type: "text",
+			name: "Title",
+			startTime: ZERO_MEDIA_TIME,
+			duration,
+			trimStart: ZERO_MEDIA_TIME,
+			trimEnd: ZERO_MEDIA_TIME,
+			params: { content: "Hello", opacity: 1 },
+			fade: { in: seconds({ value: 1 }) },
+		};
+
+		expect(hasActiveFade({ element })).toBe(true);
+		expect(getMaxFadeDuration({ element, edge: "out" })).toBe(
+			seconds({ value: 5 }),
+		);
 	});
 });

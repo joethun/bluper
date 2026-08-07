@@ -25,7 +25,7 @@ const held = new Map<string, number>();
 
 await mock.module("@/services/video-cache/service", () => ({
 	videoCache: {
-		getFrameAt: async ({
+		getSampleAt: async ({
 			mediaId,
 			sinkKey = mediaId,
 			time,
@@ -42,11 +42,25 @@ await mock.module("@/services/video-cache/service", () => ({
 			if (generations.get(sinkKey) !== mine) {
 				const stale = held.get(sinkKey);
 				return stale === undefined
-					? null
-					: { canvas: { ts: stale }, timestamp: stale, duration: 1 / 30 };
+					? {
+							// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- WebCodecs shim
+							toVideoFrame: () => ({ ts: stale }) as unknown as VideoFrame,
+							displayWidth: 1920,
+							displayHeight: 1080,
+							timestamp: stale,
+							duration: 1 / 30,
+						}
+					: null;
 			}
 			held.set(sinkKey, time);
-			return { canvas: { ts: time }, timestamp: time, duration: 1 / 30 };
+			return {
+				// eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- WebCodecs shim
+				toVideoFrame: () => ({ ts: time }) as unknown as VideoFrame,
+				displayWidth: 1920,
+				displayHeight: 1080,
+				timestamp: time,
+				duration: 1 / 30,
+			};
 		},
 	},
 }));

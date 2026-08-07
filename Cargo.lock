@@ -673,6 +673,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bluper-desktop"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+]
+
+[[package]]
 name = "bridge"
 version = "0.1.0"
 dependencies = [
@@ -3809,13 +3816,6 @@ dependencies = [
  "is-wsl",
  "libc",
  "pathdiff",
-]
-
-[[package]]
-name = "bluper-desktop"
-version = "0.1.0"
-dependencies = [
- "gpui",
 ]
 
 [[package]]

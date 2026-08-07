@@ -1,15 +1,15 @@
 import { Command, type CommandResult } from "@/commands/base-command";
 import { EditorCore } from "@/core";
-import { isVisualElement, updateElementInSceneTracks } from "@/timeline";
-import type { SceneTracks, VisualElement } from "@/timeline";
+import { isEffectableElement, updateElementInSceneTracks } from "@/timeline";
+import type { SceneTracks, EffectableElement } from "@/timeline";
 
 function toggleEffectOnElement({
 	element,
 	effectId,
 }: {
-	element: VisualElement;
+	element: EffectableElement;
 	effectId: string;
-}): VisualElement {
+}): EffectableElement {
 	const currentEffects = element.effects ?? [];
 	const updated = currentEffects.map((effect) =>
 		effect.id === effectId ? { ...effect, enabled: !effect.enabled } : effect,
@@ -46,10 +46,10 @@ export class ToggleClipEffectCommand extends Command {
 			tracks: this.savedState,
 			trackId: this.trackId,
 			elementId: this.elementId,
-			elementPredicate: isVisualElement,
+			elementPredicate: isEffectableElement,
 		update: (element) => {
 			return toggleEffectOnElement({
-				element: element as VisualElement,
+				element: element as EffectableElement,
 				effectId: this.effectId,
 			});
 			},

@@ -2,7 +2,7 @@ import { EditorCore } from "@/core";
 import { Command, type CommandResult } from "@/commands/base-command";
 import { removeEffectParamKeyframe } from "@/animation/effect-param-channel";
 import { updateElementInSceneTracks } from "@/timeline";
-import { isVisualElement } from "@/timeline/element-utils";
+import { isEffectableElement } from "@/timeline/element-utils";
 import type { SceneTracks } from "@/timeline";
 
 export class RemoveEffectParamKeyframeCommand extends Command {
@@ -42,7 +42,7 @@ export class RemoveEffectParamKeyframeCommand extends Command {
 			tracks: this.savedState,
 			trackId: this.trackId,
 			elementId: this.elementId,
-			elementPredicate: isVisualElement,
+			elementPredicate: isEffectableElement,
 			update: (element) => {
 				const animations = removeEffectParamKeyframe({
 					animations: element.animations,

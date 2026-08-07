@@ -281,6 +281,25 @@ async function collectVisualSourceNode({
 				});
 			},
 		});
+	} else if (typeof VideoFrame !== "undefined" && source instanceof VideoFrame) {
+		// The fast path: the layer is the decoded WebCodecs frame straight from
+		// the GPU. No canvas blit, no `readPixels`. Identity-based caching keeps
+		// a held still from re-uploading.
+		const previous = textures.get(textureId);
+		if (
+			previous?.kind !== "video" ||
+			previous.source !== source ||
+			previous.width !== sourceWidth ||
+			previous.height !== sourceHeight
+		) {
+			textures.set(textureId, {
+				kind: "video",
+				id: textureId,
+				source,
+				width: sourceWidth,
+				height: sourceHeight,
+			});
+		}
 	} else {
 		textures.set(textureId, {
 			kind: "external",
@@ -382,36 +401,25 @@ function collectTextNode({
 		height,
 		draw: (ctx) => {
 			const adjustments = node.resolved?.adjustments;
-			const effects = node.resolved?.canvasEffects ?? [];
-			if (!adjustments && effects.length === 0) {
+			if (!adjustments) {
 				renderTextToContext({ node, ctx });
 				return;
 			}
-			// Both the adjustment passes and the effect stack read the finished layer
-			// back, over itself with blend modes or pixel by pixel, so the type has to
-			// be rasterised somewhere they can reach it.
+			// The adjustment passes read the finished layer back, over itself with
+			// blend modes, so the type has to be rasterised somewhere they can reach
+			// it.
 			const raster = borrowSurface({
 				key: "text-raster",
 				width,
 				height,
 			});
 			renderTextToContext({ node, ctx: raster.ctx });
-			paintEffectedLayer({
+			paintAdjustedLayer({
 				ctx,
 				source: raster.canvas,
 				width,
 				height,
-				effects,
-				drawBase: adjustments
-					? ({ ctx: target, source: base }) =>
-							paintAdjustedLayer({
-								ctx: target,
-								source: base,
-								width,
-								height,
-								adjustments,
-							})
-					: undefined,
+				adjustments,
 			});
 		},
 	});
@@ -421,7 +429,7 @@ function collectTextNode({
 		transform: fullCanvasTransform(renderer),
 		opacity: node.resolved.opacity,
 		blendMode: node.params.blendMode ?? "normal",
-		effectPassGroups: node.resolved.effectPasses,
+		effectPassGroups: [],
 		mask: null,
 	});
 }

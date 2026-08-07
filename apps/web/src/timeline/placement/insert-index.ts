@@ -42,12 +42,17 @@ export function resolvePreferredNewTrackPlacement({
 	trackType: TrackType;
 	preferredIndex: number;
 	direction: "above" | "below";
-}): { insertIndex: number; insertPosition: "above" | "below" | null } {
+}): {
+	insertIndex: number;
+	insertPosition: "above" | "below" | null;
+	wasRedirected: boolean;
+} {
 	const trackCount = tracks.overlay.length + 1 + tracks.audio.length;
 	if (trackCount === 0) {
 		return {
 			insertIndex: 0,
 			insertPosition: trackType === "audio" ? "below" : null,
+			wasRedirected: false,
 		};
 	}
 
@@ -62,6 +67,7 @@ export function resolvePreferredNewTrackPlacement({
 			return {
 				insertIndex: mainTrackIndex + 1,
 				insertPosition: "below",
+				wasRedirected: true,
 			};
 		}
 
@@ -69,6 +75,7 @@ export function resolvePreferredNewTrackPlacement({
 			insertIndex:
 				direction === "above" ? safePreferredIndex : safePreferredIndex + 1,
 			insertPosition: direction,
+			wasRedirected: false,
 		};
 	}
 
@@ -78,11 +85,13 @@ export function resolvePreferredNewTrackPlacement({
 		return {
 			insertIndex: mainTrackIndex,
 			insertPosition: "above",
+			wasRedirected: true,
 		};
 	}
 
 	return {
 		insertIndex,
 		insertPosition: direction,
+		wasRedirected: false,
 	};
 }

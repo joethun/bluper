@@ -3,7 +3,6 @@ use effects::{ApplyEffectsOptions, EffectPass, EffectPipeline, UniformValue};
 use gpu::{FULLSCREEN_SHADER_SOURCE, GpuContext, wgpu};
 use masks::{ApplyMaskFeatherOptions, MaskFeatherPipeline};
 use thiserror::Error;
-use wgpu::util::DeviceExt;
 
 use crate::{
     BlendMode,
@@ -13,7 +12,13 @@ use crate::{
     },
     texture_pool::TexturePool,
     texture_store::TextureStore,
+    uniform_ring::UniformRing,
 };
+
+/// Slots in each uniform ring. Sized to clear the GPU's per-frame in-flight
+/// budget on the backends that take 1–2 frames of latency — actual usage per
+/// frame stays well below this (one slot per layer / blend / mask pass).
+const UNIFORM_RING_SLOTS: usize = 16;
 
 const LAYER_SHADER_SOURCE: &str = include_str!("shaders/layer.wgsl");
 const BLEND_SHADER_SOURCE: &str = include_str!("shaders/blend.wgsl");
@@ -29,12 +34,12 @@ pub struct Compositor {
     texture_pool: TexturePool,
     effects: EffectPipeline,
     masks: MaskFeatherPipeline,
-    layer_uniform_bind_group_layout: wgpu::BindGroupLayout,
     layer_pipeline: wgpu::RenderPipeline,
-    blend_uniform_bind_group_layout: wgpu::BindGroupLayout,
+    layer_uniform_ring: UniformRing,
     blend_pipeline: wgpu::RenderPipeline,
-    mask_uniform_bind_group_layout: wgpu::BindGroupLayout,
+    blend_uniform_ring: UniformRing,
     mask_pipeline: wgpu::RenderPipeline,
+    mask_uniform_ring: UniformRing,
 }
 
 #[derive(Debug, Error)]
@@ -266,17 +271,45 @@ impl Compositor {
             cache: None,
         });
 
+        // Sized so the padded struct fits comfortably inside the uniform
+        // buffer alignment (typically 16 bytes on WebGL).
+        let layer_uniform_size = std::mem::size_of::<LayerUniformBuffer>() as u64;
+        let blend_uniform_size = std::mem::size_of::<BlendUniformBuffer>() as u64;
+        let mask_uniform_size = std::mem::size_of::<MaskUniformBuffer>() as u64;
+
+        let layer_uniform_ring = UniformRing::new(
+            context.device(),
+            &layer_uniform_bind_group_layout,
+            layer_uniform_size,
+            "compositor-layer-uniform-ring",
+            UNIFORM_RING_SLOTS,
+        );
+        let blend_uniform_ring = UniformRing::new(
+            context.device(),
+            &blend_uniform_bind_group_layout,
+            blend_uniform_size,
+            "compositor-blend-uniform-ring",
+            UNIFORM_RING_SLOTS,
+        );
+        let mask_uniform_ring = UniformRing::new(
+            context.device(),
+            &mask_uniform_bind_group_layout,
+            mask_uniform_size,
+            "compositor-mask-uniform-ring",
+            UNIFORM_RING_SLOTS,
+        );
+
         Self {
             textures: TextureStore::default(),
             texture_pool: TexturePool::default(),
             effects: EffectPipeline::new(context),
             masks: MaskFeatherPipeline::new(context),
-            layer_uniform_bind_group_layout,
             layer_pipeline,
-            blend_uniform_bind_group_layout,
+            layer_uniform_ring,
             blend_pipeline,
-            mask_uniform_bind_group_layout,
+            blend_uniform_ring,
             mask_pipeline,
+            mask_uniform_ring,
         }
     }
 
@@ -411,11 +444,17 @@ impl Compositor {
         frame: &FrameDescriptor,
         layer: &LayerDescriptor,
     ) -> Result<wgpu::Texture, CompositorError> {
-        let source = self.textures.get(&layer.texture_id).ok_or_else(|| {
-            CompositorError::MissingTexture {
+        // Clone the texture out of the store so the call into
+        // `render_source_to_texture` (which now needs `&mut self` to cycle
+        // the uniform ring) doesn't have to hold an immutable borrow alive.
+        let source = self
+            .textures
+            .get(&layer.texture_id)
+            .ok_or_else(|| CompositorError::MissingTexture {
                 texture_id: layer.texture_id.clone(),
-            }
-        })?;
+            })?
+            .texture()
+            .clone();
 
         let mut current =
             self.texture_pool
@@ -423,7 +462,7 @@ impl Compositor {
         self.render_source_to_texture(
             context,
             encoder,
-            source.texture(),
+            &source,
             &current,
             frame.width,
             frame.height,
@@ -562,7 +601,7 @@ impl Compositor {
     }
 
     fn render_source_to_texture(
-        &self,
+        &mut self,
         context: &GpuContext,
         encoder: &mut wgpu::CommandEncoder,
         source: &wgpu::Texture,
@@ -589,33 +628,22 @@ impl Compositor {
                     },
                 ],
             });
-        let uniform_buffer =
-            context
-                .device()
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("compositor-layer-uniform-buffer"),
-                    contents: bytemuck::bytes_of(&LayerUniformBuffer {
-                        resolution: [width as f32, height as f32],
-                        center: [layer.transform.center_x, layer.transform.center_y],
-                        size: [layer.transform.width, layer.transform.height],
-                        rotation_radians: layer.transform.rotation_degrees.to_radians(),
-                        opacity: layer.opacity,
-                        flip_x: if layer.transform.flip_x { 1.0 } else { 0.0 },
-                        flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
-                        _padding: [0.0; 2],
-                    }),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                });
-        let uniform_bind_group = context
-            .device()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("compositor-layer-uniform-bind-group"),
-                layout: &self.layer_uniform_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
-            });
+        let uniform = LayerUniformBuffer {
+            resolution: [width as f32, height as f32],
+            center: [layer.transform.center_x, layer.transform.center_y],
+            size: [layer.transform.width, layer.transform.height],
+            rotation_radians: layer.transform.rotation_degrees.to_radians(),
+            opacity: layer.opacity,
+            flip_x: if layer.transform.flip_x { 1.0 } else { 0.0 },
+            flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
+            _padding: [0.0; 2],
+        };
+        let (uniform_buffer, uniform_bind_group) = self.layer_uniform_ring.cycle();
+        context.queue().write_buffer(
+            uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniform),
+        );
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -637,7 +665,7 @@ impl Compositor {
             render_pass.set_pipeline(&self.layer_pipeline);
             render_pass.set_vertex_buffer(0, context.fullscreen_quad().slice(..));
             render_pass.set_bind_group(0, &source_bind_group, &[]);
-            render_pass.set_bind_group(1, &uniform_bind_group, &[]);
+            render_pass.set_bind_group(1, uniform_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
     }
@@ -691,27 +719,16 @@ impl Compositor {
                     },
                 ],
             });
-        let uniform_buffer =
-            context
-                .device()
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("compositor-mask-uniform-buffer"),
-                    contents: bytemuck::bytes_of(&MaskUniformBuffer {
-                        inverted: if inverted { 1.0 } else { 0.0 },
-                        _padding: [0.0; 3],
-                    }),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                });
-        let uniform_bind_group = context
-            .device()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("compositor-mask-uniform-bind-group"),
-                layout: &self.mask_uniform_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
-            });
+        let uniform = MaskUniformBuffer {
+            inverted: if inverted { 1.0 } else { 0.0 },
+            _padding: [0.0; 3],
+        };
+        let (uniform_buffer, uniform_bind_group) = self.mask_uniform_ring.cycle();
+        context.queue().write_buffer(
+            uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniform),
+        );
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -734,7 +751,7 @@ impl Compositor {
             render_pass.set_vertex_buffer(0, context.fullscreen_quad().slice(..));
             render_pass.set_bind_group(0, &layer_bind_group, &[]);
             render_pass.set_bind_group(1, &mask_bind_group, &[]);
-            render_pass.set_bind_group(2, &uniform_bind_group, &[]);
+            render_pass.set_bind_group(2, uniform_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
         target
@@ -788,27 +805,16 @@ impl Compositor {
                     },
                 ],
             });
-        let uniform_buffer =
-            context
-                .device()
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("compositor-blend-uniform-buffer"),
-                    contents: bytemuck::bytes_of(&BlendUniformBuffer {
-                        blend_mode: blend_mode.shader_code(),
-                        _padding: [0; 3],
-                    }),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                });
-        let uniform_bind_group = context
-            .device()
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("compositor-blend-uniform-bind-group"),
-                layout: &self.blend_uniform_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
-            });
+        let uniform = BlendUniformBuffer {
+            blend_mode: blend_mode.shader_code(),
+            _padding: [0; 3],
+        };
+        let (uniform_buffer, uniform_bind_group) = self.blend_uniform_ring.cycle();
+        context.queue().write_buffer(
+            uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniform),
+        );
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -831,7 +837,7 @@ impl Compositor {
             render_pass.set_vertex_buffer(0, context.fullscreen_quad().slice(..));
             render_pass.set_bind_group(0, &base_bind_group, &[]);
             render_pass.set_bind_group(1, &layer_bind_group, &[]);
-            render_pass.set_bind_group(2, &uniform_bind_group, &[]);
+            render_pass.set_bind_group(2, uniform_bind_group, &[]);
             render_pass.draw(0..6, 0..1);
         }
         Ok(target)

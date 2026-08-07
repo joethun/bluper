@@ -1,15 +1,15 @@
 import { Command, type CommandResult } from "@/commands/base-command";
 import { EditorCore } from "@/core";
-import { isVisualElement, updateElementInSceneTracks } from "@/timeline";
-import type { SceneTracks, VisualElement } from "@/timeline";
+import { isEffectableElement, updateElementInSceneTracks } from "@/timeline";
+import type { SceneTracks, EffectableElement } from "@/timeline";
 
 function removeEffectFromElement({
 	element,
 	effectId,
 }: {
-	element: VisualElement;
+	element: EffectableElement;
 	effectId: string;
-}): VisualElement {
+}): EffectableElement {
 	const currentEffects = element.effects ?? [];
 	const filtered = currentEffects.filter((effect) => effect.id !== effectId);
 	return { ...element, effects: filtered };
@@ -44,10 +44,10 @@ export class RemoveClipEffectCommand extends Command {
 			tracks: this.savedState,
 			trackId: this.trackId,
 			elementId: this.elementId,
-			elementPredicate: isVisualElement,
+			elementPredicate: isEffectableElement,
 		update: (element) => {
 			return removeEffectFromElement({
-				element: element as VisualElement,
+				element: element as EffectableElement,
 				effectId: this.effectId,
 			});
 			},

@@ -198,8 +198,6 @@ export function Timeline() {
 
 	const {
 		handleRulerMouseDown: handlePlayheadRulerMouseDown,
-		notifyUserScrolled,
-		wasLastScrollProgrammatic,
 	} = useTimelinePlayhead({
 		zoomLevel,
 		rulerRef,
@@ -303,7 +301,6 @@ export function Timeline() {
 				tracks.scrollTop = Math.max(0, tracks.scrollTop + e.deltaY);
 			}
 
-			notifyUserScrolled();
 			syncFollowers();
 			saveScrollPositionRef.current();
 		};
@@ -316,7 +313,7 @@ export function Timeline() {
 			container.removeEventListener("wheel", onWheel, { capture: true });
 			if (zoomRafId !== null) cancelAnimationFrame(zoomRafId);
 		};
-	}, [syncFollowers, notifyUserScrolled]);
+	}, [syncFollowers]);
 
 	useInitialScrollBottom({
 		tracksScrollRef,
@@ -508,9 +505,6 @@ export function Timeline() {
 						className="flex-1"
 						ref={tracksScrollRef}
 						onScroll={() => {
-							if (!wasLastScrollProgrammatic()) {
-								notifyUserScrolled();
-							}
 							syncFollowers();
 							saveScrollPosition();
 						}}

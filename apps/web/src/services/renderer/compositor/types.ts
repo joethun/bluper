@@ -47,13 +47,26 @@ export type TextureCanvasDrawFn = (
 
 /**
  * A layer texture whose pixels come from somewhere outside the renderer —
- * typically a decoded video/image frame or a sticker. Cached by reference
- * identity of the source object.
+ * typically a decoded image frame or a sticker that the editor drew into an
+ * `OffscreenCanvas`. Cached by reference identity of the source object.
  */
 export type ExternalTextureDescriptor = {
 	kind: "external";
 	id: string;
 	source: CanvasImageSource;
+	width: number;
+	height: number;
+};
+
+/**
+ * A layer texture backed by a WebCodecs `VideoFrame`. The hot path for
+ * decoded video: the frame is consumed directly by the GPU via
+ * `copyExternalImageToTexture`, with no canvas intermediate.
+ */
+export type VideoFrameTextureDescriptor = {
+	kind: "video";
+	id: string;
+	source: VideoFrame;
 	width: number;
 	height: number;
 };
@@ -75,4 +88,5 @@ export type RenderedTextureDescriptor = {
 
 export type TextureUploadDescriptor =
 	| ExternalTextureDescriptor
+	| VideoFrameTextureDescriptor
 	| RenderedTextureDescriptor;

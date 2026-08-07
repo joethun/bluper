@@ -46,7 +46,7 @@ import {
 	resolveTransitionFrame,
 } from "@/transitions";
 import type { TransitionSideState } from "@/transitions/types";
-import type { WrappedCanvas } from "mediabunny";
+import type { VideoSample } from "mediabunny";
 import { videoCache } from "@/services/video-cache/service";
 import type { CanvasRenderer } from "./canvas-renderer";
 import type { AnyBaseNode } from "./nodes/base-node";
@@ -422,7 +422,7 @@ function sampleVideoFrame({
 }: {
 	node: VideoNode;
 	clipTime: number;
-}): Promise<WrappedCanvas | null> {
+}): Promise<VideoSample | null> {
 	const sourceTime = resolveSampledSourceTime({
 		freeze: node.params.freeze,
 		trimStart: node.params.trimStart,
@@ -436,7 +436,7 @@ function sampleVideoFrame({
 		max: getLastSampleableSourceTime({ params: node.params }),
 	});
 
-	return videoCache.getFrameAt({
+	return videoCache.getSampleAt({
 		mediaId: node.params.mediaId,
 		sinkKey: node.params.sinkKey,
 		file: node.params.file,
@@ -455,6 +455,23 @@ async function resolveVideoNode({
 		return null;
 	}
 
+	// `resolveVisualState`'s early null returns (outside its render window,
+	// outside its span with no transition, fully transparent with no overlay)
+	// don't depend on sourceWidth/sourceHeight. Run them first so we don't
+	// decode and upload a frame we're about to throw away — the most common
+	// case is transitions pushing a side of the cut outside its own clip
+	// head/tail.
+	if (
+		!resolveVisualState({
+			params: node.params,
+			context,
+			sourceWidth: 0,
+			sourceHeight: 0,
+		})
+	) {
+		return null;
+	}
+
 	const clipTime = context.time - node.params.timeOffset;
 	const frame = await sampleVideoFrame({ node, clipTime });
 	if (!frame) {
@@ -466,11 +483,14 @@ async function resolveVideoNode({
 		return null;
 	}
 
+	const sourceWidth = frame.displayWidth;
+	const sourceHeight = frame.displayHeight;
+
 	const visualState = resolveVisualState({
 		params: node.params,
 		context,
-		sourceWidth: frame.canvas.width,
-		sourceHeight: frame.canvas.height,
+		sourceWidth,
+		sourceHeight,
 	});
 	if (!visualState) {
 		return null;
@@ -478,9 +498,9 @@ async function resolveVideoNode({
 
 	return {
 		...visualState,
-		source: frame.canvas,
-		sourceWidth: frame.canvas.width,
-		sourceHeight: frame.canvas.height,
+		source: frame.toVideoFrame(),
+		sourceWidth,
+		sourceHeight,
 	};
 }
 
@@ -587,6 +607,13 @@ function resolveTextNode({
 		elementDuration: node.params.duration,
 	});
 	const background = buildTextBackgroundFromElement({ element: node.params });
+	// Text owns no transitions, so its fade is the only thing multiplying the
+	// authored opacity down at the edges.
+	const fadeOpacity = resolveFadeOpacity({
+		fade: node.params.fade,
+		clipTime: context.time - node.params.startTime,
+		duration: node.params.duration,
+	});
 
 	return {
 		transform: resolveTransformAtTime({
@@ -594,11 +621,12 @@ function resolveTextNode({
 			animations: node.params.animations,
 			localTime,
 		}),
-		opacity: resolveOpacityAtTime({
-			baseOpacity: node.params.opacity,
-			animations: node.params.animations,
-			localTime,
-		}),
+		opacity:
+			resolveOpacityAtTime({
+				baseOpacity: node.params.opacity,
+				animations: node.params.animations,
+				localTime,
+			}) * fadeOpacity,
 		adjustments: resolveClipAdjustmentsAtTime({
 			params: node.params.adjustParams,
 			animations: node.params.animations,
@@ -618,19 +646,6 @@ function resolveTextNode({
 			animations: node.params.animations,
 			propertyPath: "background.color",
 			localTime,
-		}),
-		effectPasses: resolveEffectPassGroups({
-			effects: node.params.effects,
-			animations: node.params.animations,
-			localTime,
-			width: context.renderer.width,
-			height: context.renderer.height,
-		}),
-		canvasEffects: resolveCanvasEffects({
-			effects: node.params.effects,
-			animations: node.params.animations,
-			localTime,
-			duration: node.params.duration,
 		}),
 		measuredText: measureTextElement({
 			element: node.params,
@@ -690,7 +705,7 @@ async function resolveBackdropSource({
 			clipDuration: node.params.duration,
 			retime: node.params.retime,
 		});
-		const frame = await videoCache.getFrameAt({
+		const frame = await videoCache.getSampleAt({
 			mediaId: node.params.mediaId,
 			file: node.params.file,
 			time: mediaTimeToSeconds({ time: sourceTime }),
@@ -700,9 +715,9 @@ async function resolveBackdropSource({
 		}
 
 		return {
-			source: frame.canvas,
-			width: frame.canvas.width,
-			height: frame.canvas.height,
+			source: frame.toVideoFrame(),
+			width: frame.displayWidth,
+			height: frame.displayHeight,
 		};
 	}
 

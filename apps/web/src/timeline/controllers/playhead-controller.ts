@@ -53,7 +53,6 @@ export interface PlayheadConfig {
 	duration: MediaTime;
 	getActiveProjectFps: () => FrameRate | null;
 	isShiftHeld: () => boolean;
-	getIsPlaying: () => boolean;
 	getRulerEl: () => HTMLDivElement | null;
 	getRulerScrollEl: () => HTMLDivElement | null;
 	getTracksScrollEl: () => HTMLDivElement | null;
@@ -114,18 +113,6 @@ export class PlayheadController {
 	/** Latest un-applied pointer position, drained by the rAF below. */
 	private pendingClientX: number | null = null;
 	private moveRafId: number | null = null;
-	/**
-	 * Once the user scrolls the timeline mid-playback, the auto-follow snap
-	 * stops fighting them. Reset on the next play() transition via
-	 * `resetUserScrolledDuringPlayback()`.
-	 */
-	private userScrolledDuringPlayback = false;
-	/**
-	 * Timestamp of the last `scrollLeft` write from inside this controller.
-	 * Scroll events that fire within a couple of frames of this are our own
-	 * writes, not user input, so the scroll listener can ignore them.
-	 */
-	private lastProgrammaticScrollAt = 0;
 
 	constructor(deps: { configRef: PlayheadConfigRef }) {
 		this.configRef = deps.configRef;
@@ -133,8 +120,6 @@ export class PlayheadController {
 		this.onRulerMouseDown = this.onRulerMouseDown.bind(this);
 		this.handleMouseMove = this.handleMouseMove.bind(this);
 		this.handleMouseUp = this.handleMouseUp.bind(this);
-		this.notifyUserScrolled = this.notifyUserScrolled.bind(this);
-		this.wasLastScrollProgrammatic = this.wasLastScrollProgrammatic.bind(this);
 	}
 
 	private get config(): PlayheadConfig {
@@ -155,41 +140,6 @@ export class PlayheadController {
 	 */
 	isDraggingScrub(): boolean {
 		return this.session.kind === "scrubbing" && this.dragStarted;
-	}
-
-	/**
-	 * Called by the timeline's wheel/scroll listeners when the user has
-	 * manually moved the viewport. Suppresses auto-follow for the rest of
-	 * the current playback session.
-	 */
-	notifyUserScrolled(): void {
-		this.userScrolledDuringPlayback = true;
-	}
-
-	/**
-	 * Called when playback restarts (transitions from paused to playing).
-	 * Re-engages the auto-follow snap.
-	 */
-	resetUserScrolledDuringPlayback(): void {
-		this.userScrolledDuringPlayback = false;
-	}
-
-	/**
-	 * Returns true if the most recent scroll event is likely from this
-	 * controller's own `scrollLeft` write (auto-follow or edge auto-scroll)
-	 * rather than user input. Scroll events fire synchronously after a
-	 * programmatic write, so a sub-frame window is enough to tell them apart.
-	 */
-	wasLastScrollProgrammatic(): boolean {
-		return performance.now() - this.lastProgrammaticScrollAt < 32;
-	}
-
-	/**
-	 * Marks the current time as the last programmatic scroll write.
-	 * Called immediately after this controller mutates `scrollLeft`.
-	 */
-	markProgrammaticScroll(): void {
-		this.lastProgrammaticScrollAt = performance.now();
 	}
 
 	destroy(): void {
@@ -251,45 +201,12 @@ export class PlayheadController {
 	}
 
 	/**
-	 * Updates the playhead position and auto-scrolls to keep the playhead
-	 * visible during playback — unless the user has manually scrolled this
-	 * session, in which case the playhead is allowed to leave the viewport
-	 * without dragging the camera back.
+	 * Updates the playhead position on playback events. The playhead is
+	 * intentionally allowed to leave the viewport — playback never auto-scrolls
+	 * the timeline; the user owns the camera.
 	 */
 	handlePlaybackUpdate(time: MediaTime): void {
 		this.updatePlayheadLeft(time);
-
-		// Auto-scroll only during playback, not while scrubbing.
-		if (!this.config.getIsPlaying() || this.session.kind === "scrubbing")
-			return;
-
-		// User has scrolled away from the playhead this session — leave them be.
-		if (this.userScrolledDuringPlayback) return;
-
-		const rulerViewport = this.config.getRulerScrollEl();
-		const tracksViewport = this.config.getTracksScrollEl();
-		if (!rulerViewport || !tracksViewport) return;
-
-		const playheadPixels = timelineTimeToPixels({
-			time,
-			zoomLevel: this.config.zoomLevel,
-		});
-		const viewportWidth = rulerViewport.clientWidth;
-		const isOutOfView =
-			playheadPixels < rulerViewport.scrollLeft ||
-			playheadPixels > rulerViewport.scrollLeft + viewportWidth;
-
-		if (isOutOfView) {
-			const desiredScroll = Math.max(
-				0,
-				Math.min(
-					rulerViewport.scrollWidth - viewportWidth,
-					playheadPixels - viewportWidth / 2,
-				),
-			);
-			rulerViewport.scrollLeft = tracksViewport.scrollLeft = desiredScroll;
-			this.markProgrammaticScroll();
-		}
 	}
 
 	// --- Private ---
@@ -461,10 +378,6 @@ export class PlayheadController {
 		}
 
 		this.session = { kind: "idle" };
-		// A scrub moves the viewport via edge auto-scroll; that can look like a
-		// user scroll and latch the "follow is off" flag. Clearing on release
-		// keeps auto-follow re-engaged if playback is still running.
-		this.userScrolledDuringPlayback = false;
 		this.deactivate();
 	}
 }

@@ -86,6 +86,25 @@ pub(crate) fn import_canvas_texture(
     context.import_offscreen_canvas_texture(canvas, width, height, label)
 }
 
+pub(crate) fn import_video_frame_texture(
+    context: &GpuContext,
+    video_frame: &wgpu::web_sys::VideoFrame,
+    width: u32,
+    height: u32,
+    label: &'static str,
+) -> wgpu::Texture {
+    context.import_video_frame_texture(video_frame, width, height, label)
+}
+
+pub(crate) fn read_video_frame_property(
+    object: &Object,
+    name: &str,
+) -> Result<wgpu::web_sys::VideoFrame, JsValue> {
+    read_property(object, name)?
+        .dyn_into::<wgpu::web_sys::VideoFrame>()
+        .map_err(|_| JsValue::from_str(&format!("Property '{name}' must be a VideoFrame")))
+}
+
 pub(crate) fn render_texture_to_canvas(
     context: &GpuContext,
     texture: &wgpu::Texture,

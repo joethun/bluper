@@ -1,17 +1,17 @@
 import { Command, type CommandResult } from "@/commands/base-command";
 import { EditorCore } from "@/core";
-import { isVisualElement, updateElementInSceneTracks } from "@/timeline";
-import type { SceneTracks, VisualElement } from "@/timeline";
+import { isEffectableElement, updateElementInSceneTracks } from "@/timeline";
+import type { SceneTracks, EffectableElement } from "@/timeline";
 
 function reorderEffectsOnElement({
 	element,
 	fromIndex,
 	toIndex,
 }: {
-	element: VisualElement;
+	element: EffectableElement;
 	fromIndex: number;
 	toIndex: number;
-}): VisualElement {
+}): EffectableElement {
 	const effects = [...(element.effects ?? [])];
 	const [moved] = effects.splice(fromIndex, 1);
 	effects.splice(toIndex, 0, moved);
@@ -51,10 +51,10 @@ export class ReorderClipEffectsCommand extends Command {
 			tracks: this.savedState,
 			trackId: this.trackId,
 			elementId: this.elementId,
-			elementPredicate: isVisualElement,
+			elementPredicate: isEffectableElement,
 		update: (element) => {
 			return reorderEffectsOnElement({
-				element: element as VisualElement,
+				element: element as EffectableElement,
 				fromIndex: this.fromIndex,
 				toIndex: this.toIndex,
 			});

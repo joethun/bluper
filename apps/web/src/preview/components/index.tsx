@@ -139,9 +139,19 @@ function PreviewCanvas({
 }) {
 	const canvasMountRef = useRef<HTMLDivElement>(null);
 	const viewportRef = useRef<HTMLDivElement>(null);
-	const lastFrameRef = useRef(-1);
-	const lastSceneRef = useRef<RootNode | null>(null);
 	const renderingRef = useRef(false);
+	const requestedRef = useRef<
+		| {
+				frame: number;
+				scene: RootNode;
+				time: number;
+		  }
+		| null
+	>(null);
+	const completedRef = useRef<{
+		frame: number;
+		scene: RootNode | null;
+	} | null>(null);
 	const { width: nativeWidth, height: nativeHeight } = usePreviewSize();
 	const viewportSize = useContainerSize({ containerRef: viewportRef });
 	const editor = useEditor();
@@ -182,8 +192,11 @@ function PreviewCanvas({
 		};
 	}, [renderer]);
 
-	const render = useCallback(() => {
-		if (!renderTree || renderingRef.current) return;
+	const render = useCallback(async () => {
+		if (!renderTree) {
+			requestedRef.current = null;
+			return;
+		}
 
 		const renderTime = Math.min(
 			editor.playback.getCurrentTime(),
@@ -194,21 +207,60 @@ function PreviewCanvas({
 		);
 		const frame = Math.floor(renderTime / ticksPerFrame);
 
+		// Every tick updates "what's wanted". An in-flight render reads this on
+		// its way back up and continues until it lands here, so the GPU canvas
+		// never goes stale by more than one frame. Replaces the previous
+		// `renderingRef.current = true` + silent drop pattern, which lost every
+		// other frame during scrub and let older renders overwrite newer ones.
+		requestedRef.current = { frame, scene: renderTree, time: renderTime };
+
+		// Already rendering; the in-flight render's inner loop will pick up
+		// this latest state when its current `await` resolves.
+		if (renderingRef.current) {
+			return;
+		}
+
+		const completed = completedRef.current;
 		if (
-			frame === lastFrameRef.current &&
-			renderTree === lastSceneRef.current
+			completed &&
+			completed.frame === frame &&
+			completed.scene === renderTree
 		) {
 			return;
 		}
 
 		renderingRef.current = true;
-		lastSceneRef.current = renderTree;
-		lastFrameRef.current = frame;
-		renderer
-			.render({ node: renderTree, time: renderTime })
-			.then(() => {
-				renderingRef.current = false;
-			});
+		try {
+			// Inner loop: render back-to-back until we reach the most-recently
+			// requested state. During scrub the latest requested frame changes
+			// faster than we can render — this drops intermediate frames in
+			// favor of always landing on where the user is now, instead of
+			// staying stuck several frames behind.
+			while (true) {
+				const wanted = requestedRef.current;
+				if (!wanted) break;
+
+				const completedNow = completedRef.current;
+				if (
+					completedNow &&
+					completedNow.frame === wanted.frame &&
+					completedNow.scene === wanted.scene
+				) {
+					break;
+				}
+
+				completedRef.current = {
+					frame: wanted.frame,
+					scene: wanted.scene,
+				};
+				await renderer.render({
+					node: wanted.scene,
+					time: wanted.time,
+				});
+			}
+		} finally {
+			renderingRef.current = false;
+		}
 	}, [renderer, renderTree, editor.playback, editor.timeline]);
 
 	useRafLoop(render);

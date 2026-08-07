@@ -11,15 +11,27 @@ import { mediaTime, TICKS_PER_SECOND, ZERO_MEDIA_TIME } from "@/wasm";
 
 /**
  * A frame of pixels standing in for a decoded video frame. The compositor only
- * needs something it can measure and upload.
+ * needs something it can measure and upload. The WebCodecs global isn't
+ * available in this runtime, so we hand the mock an object and let the test
+ * happily treat it as a VideoFrame — the production path never touches this
+ * file.
  */
-const frameCanvas = { width: 1920, height: 1080 };
+/* eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion --
+   WebCodecs `VideoFrame` is a browser global; this test runtime has no such
+   global so we work around it with an `unknown` shim. */
+const frameVideoFrame = { ts: 0 } as unknown as VideoFrame;
 
 await mock.module("@/services/video-cache/service", () => ({
 	videoCache: {
-		getFrameAt: async ({ time }: { time: number }) => {
+		getSampleAt: async ({ time }: { time: number }) => {
 			await Promise.resolve();
-			return { canvas: frameCanvas, timestamp: time, duration: 1 / 30 };
+			return {
+				toVideoFrame: () => frameVideoFrame,
+				displayWidth: 1920,
+				displayHeight: 1080,
+				timestamp: time,
+				duration: 1 / 30,
+			};
 		},
 	},
 }));

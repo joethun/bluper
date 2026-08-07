@@ -1,5 +1,6 @@
 import type { EditorCore } from "@/core";
 import type { Bookmark, SceneTracks, TScene } from "@/timeline";
+import { autoDeleteEmptyTracks } from "@/timeline/track-cleanup";
 import { storageService } from "@/services/storage/service";
 import {
 	getMainScene,
@@ -296,9 +297,14 @@ export class ScenesManager {
 	updateSceneTracks({ tracks }: { tracks: SceneTracks }): void {
 		if (!this.active) return;
 
+		const cleanedTracks = autoDeleteEmptyTracks({
+			tracks,
+			oldTracks: this.active.tracks,
+		});
+
 		const updatedScene: TScene = {
 			...this.active,
-			tracks,
+			tracks: cleanedTracks,
 			updatedAt: new Date(),
 		};
 

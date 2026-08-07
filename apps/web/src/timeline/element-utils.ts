@@ -3,6 +3,7 @@ import {
 	HIDEABLE_ELEMENT_TYPES,
 	MASKABLE_ELEMENT_TYPES,
 	RETIMABLE_ELEMENT_TYPES,
+	EFFECTABLE_ELEMENT_TYPES,
 	VISUAL_ELEMENT_TYPES,
 	type CreateAdjustmentElement,
 	type CreateEffectElement,
@@ -21,6 +22,7 @@ import {
 	type HideableElement,
 	type MaskableElement,
 	type RetimableElement,
+	type EffectableElement,
 	type VisualElement,
 	type UploadAudioElement,
 } from "@/timeline";
@@ -52,6 +54,12 @@ export function isVisualElement(
 	return (VISUAL_ELEMENT_TYPES as readonly string[]).includes(element.type);
 }
 
+export function isEffectableElement(
+	element: TimelineElement,
+): element is EffectableElement {
+	return (EFFECTABLE_ELEMENT_TYPES as readonly string[]).includes(element.type);
+}
+
 export function isMaskableElement(
 	element: TimelineElement,
 ): element is MaskableElement {
@@ -75,7 +83,7 @@ export function hasElementEffects({
 }: {
 	element: TimelineElement;
 }): boolean {
-	return isVisualElement(element) && (element.effects?.length ?? 0) > 0;
+	return isEffectableElement(element) && (element.effects?.length ?? 0) > 0;
 }
 
 export function hasMediaId(

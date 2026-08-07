@@ -42,6 +42,28 @@ export function TextEditOverlay({
 		selection?.addRange(range);
 	}, []);
 
+	useEffect(() => {
+		// The edit lives in the shared preview overlay until it is committed, and
+		// any other gesture that starts is entitled to discard that overlay — a
+		// timeline resize does exactly that, and its handler also preventDefaults
+		// the mousedown, so the field never blurs and never gets to bank the text
+		// on its own. Capturing pointerdown gets us in ahead of all of it.
+		const handlePointerDownOutside = (event: PointerEvent) => {
+			const div = divRef.current;
+			if (!div) return;
+			if (event.target instanceof Node && div.contains(event.target)) return;
+			onCommit();
+		};
+
+		document.addEventListener("pointerdown", handlePointerDownOutside, true);
+		return () =>
+			document.removeEventListener(
+				"pointerdown",
+				handlePointerDownOutside,
+				true,
+			);
+	}, [onCommit]);
+
 	const handleInput = useCallback(() => {
 		const div = divRef.current;
 		if (!div) return;

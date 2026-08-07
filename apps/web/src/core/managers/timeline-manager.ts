@@ -12,7 +12,10 @@ import type {
 } from "@/timeline";
 import { calculateTotalDuration } from "@/timeline";
 import { TimelineDragSource } from "@/timeline/drag-source";
-import { hasPreviewOverlayChange } from "@/timeline/preview-overlay";
+import {
+	hasPreviewOverlayChange,
+	mergePreviewOverlay,
+} from "@/timeline/preview-overlay";
 import { findTrackInSceneTracks } from "@/timeline/track-element-update";
 import { lastFrameMediaTime, type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
 import {
@@ -926,11 +929,13 @@ export class TimelineManager {
 			});
 			if (changed) {
 				changedOverlayCount += 1;
-				const mergedOverlay = {
-					...existingOverlay,
-					...elementUpdates,
-				} as Partial<TimelineElement>;
-				this.previewOverlay.set(elementId, mergedOverlay);
+				this.previewOverlay.set(
+					elementId,
+					mergePreviewOverlay({
+						base: existingOverlay ?? {},
+						overlay: elementUpdates,
+					}),
+				);
 			}
 		}
 		const committedTracks = this.editor.scenes.getActiveSceneOrNull()?.tracks;
@@ -985,7 +990,7 @@ export class TimelineManager {
 			const nextElements = track.elements.map((element) => {
 				const overlay = this.previewOverlay.get(element.id);
 				return overlay
-					? ({ ...element, ...overlay } as TimelineElement)
+					? (mergePreviewOverlay({ base: element, overlay }) as TimelineElement)
 					: element;
 			});
 

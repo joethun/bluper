@@ -33,6 +33,16 @@ import {
 const MAX_CACHED_DECODED_SOURCES = 4;
 const MAX_CACHED_PREPARED_CLIPS = 12;
 
+/**
+ * How long a clip's playback gain takes to ramp from 0 to its target volume at
+ * its start, and back to 0 at its end. Every video editor masks edit-point
+ * discontinuities this way — Premiere, Final Cut, DaVinci Resolve and CapCut
+ * all apply an implicit short fade across every cut. Without it, the last
+ * chunk of an outgoing half can play past the boundary while the incoming
+ * half's first chunk plays over it, summing into `masterGain` and popping.
+ */
+const MICRO_FADE_SECONDS = 0.005;
+
 export class AudioManager {
 	private audioContext: AudioContext | null = null;
 	private masterGain: GainNode | null = null;
@@ -341,11 +351,11 @@ export class AudioManager {
 
 			const node = audioContext.createBufferSource();
 			node.buffer = buffer;
-			if (clip.retime) {
-				node.playbackRate.value = clampRetimeRate({ rate: clip.retime.rate });
-			}
+			const playbackRate = clip.retime
+				? clampRetimeRate({ rate: clip.retime.rate })
+				: 1;
+			node.playbackRate.value = playbackRate;
 			const clipGain = audioContext.createGain();
-			clipGain.gain.value = clip.volume;
 			node.connect(clipGain);
 			clipGain.connect(this.masterGain ?? audioContext.destination);
 
@@ -353,6 +363,26 @@ export class AudioManager {
 				this.playbackStartContextTime +
 				this.playbackLatencyCompensationSeconds +
 				(timelineTime - this.playbackStartTime);
+
+			// Fade the chunk's gain envelope in at the clip's head (if this is
+			// the first chunk) and out at the clip's tail (if this chunk crosses
+			// it). A streamed chunk's boundary does not line up with the cut, so
+			// the outgoing half's last chunk is scheduled to start before the
+			// cut and would otherwise keep playing through it. Ramping to zero
+			// at `clipEndTimestamp` keeps that overlap silent.
+			const clipEndTimestamp =
+				this.playbackStartContextTime +
+				this.playbackLatencyCompensationSeconds +
+				(clipEnd - this.playbackStartTime);
+			const chunkEndTimestamp = startTimestamp + buffer.duration / playbackRate;
+			this.scheduleChunkGainEnvelope({
+				clipGain,
+				startTimestamp,
+				chunkEndTimestamp,
+				clipEndTimestamp,
+				volume: clip.volume,
+				applyFadeIn: timelineTime - clip.startTime < MICRO_FADE_SECONDS,
+			});
 
 			if (startTimestamp >= audioContext.currentTime) {
 				node.start(startTimestamp);
@@ -543,6 +573,44 @@ export class AudioManager {
 		);
 	}
 
+	private scheduleChunkGainEnvelope({
+		clipGain,
+		startTimestamp,
+		chunkEndTimestamp,
+		clipEndTimestamp,
+		volume,
+		applyFadeIn,
+	}: {
+		clipGain: GainNode;
+		startTimestamp: number;
+		chunkEndTimestamp: number;
+		clipEndTimestamp: number;
+		volume: number;
+		applyFadeIn: boolean;
+	}): void {
+		clipGain.gain.cancelScheduledValues(startTimestamp);
+
+		if (applyFadeIn) {
+			clipGain.gain.setValueAtTime(0, startTimestamp);
+			clipGain.gain.linearRampToValueAtTime(volume, startTimestamp + MICRO_FADE_SECONDS);
+		} else {
+			clipGain.gain.setValueAtTime(volume, startTimestamp);
+		}
+
+		// The chunk crosses the clip's fade-out window, so ramp to silence by
+		// `clipEndTimestamp`. This is the half that masks the boundary pop: the
+		// outgoing chunk plays past the cut, but it is already at 0 by the time
+		// the next half's first chunk begins, so the two do not sum.
+		if (chunkEndTimestamp >= clipEndTimestamp - MICRO_FADE_SECONDS) {
+			const fadeOutStart = clipEndTimestamp - MICRO_FADE_SECONDS;
+			const holdStart = applyFadeIn
+				? Math.max(startTimestamp + MICRO_FADE_SECONDS, fadeOutStart)
+				: Math.max(startTimestamp, fadeOutStart);
+			clipGain.gain.setValueAtTime(volume, holdStart);
+			clipGain.gain.linearRampToValueAtTime(0, clipEndTimestamp);
+		}
+	}
+
 	private scheduleClipGainAutomation({
 		audioContext,
 		clip,
@@ -556,10 +624,19 @@ export class AudioManager {
 		startTimestamp: number;
 		startLocalTime: number;
 	}): void {
+		const microFade = MICRO_FADE_SECONDS;
+		const clipEndTimestamp = startTimestamp + (clip.duration - startLocalTime);
+		const fadeOutStart = clipEndTimestamp - microFade;
+
 		clipGain.gain.cancelScheduledValues(startTimestamp);
-		clipGain.gain.setValueAtTime(clip.volume, startTimestamp);
+		clipGain.gain.setValueAtTime(0, startTimestamp);
 
 		if (!hasAnimatedVolume({ element: clip.timelineElement })) {
+			clipGain.gain.linearRampToValueAtTime(clip.volume, startTimestamp + microFade);
+			if (fadeOutStart > startTimestamp + microFade) {
+				clipGain.gain.setValueAtTime(clip.volume, fadeOutStart);
+			}
+			clipGain.gain.linearRampToValueAtTime(0, clipEndTimestamp);
 			return;
 		}
 
@@ -570,10 +647,27 @@ export class AudioManager {
 		});
 
 		if (points.length === 0) {
+			clipGain.gain.linearRampToValueAtTime(clip.volume, startTimestamp + microFade);
+			if (fadeOutStart > startTimestamp + microFade) {
+				clipGain.gain.setValueAtTime(clip.volume, fadeOutStart);
+			}
+			clipGain.gain.linearRampToValueAtTime(0, clipEndTimestamp);
 			return;
 		}
 
-		clipGain.gain.setValueAtTime(points[0].gain, startTimestamp);
+		// Fade in to the first keyframe's gain (the value the original code
+		// snapped to there), then continue with the existing keyframe ramps.
+		const firstPoint = points[0];
+		const firstPointTimestamp =
+			startTimestamp + (firstPoint.localTime - startLocalTime);
+		const fadeInEnd = startTimestamp + microFade;
+		if (firstPointTimestamp > fadeInEnd) {
+			clipGain.gain.linearRampToValueAtTime(firstPoint.gain, fadeInEnd);
+			clipGain.gain.setValueAtTime(firstPoint.gain, firstPointTimestamp);
+		} else {
+			clipGain.gain.linearRampToValueAtTime(firstPoint.gain, firstPointTimestamp);
+		}
+
 		for (let index = 1; index < points.length; index++) {
 			const point = points[index];
 			const pointTimestamp =
@@ -584,6 +678,16 @@ export class AudioManager {
 
 			clipGain.gain.linearRampToValueAtTime(point.gain, pointTimestamp);
 		}
+
+		// Fade out from the last keyframe (or the fade-out anchor) to silence
+		// at the clip's end. Anchoring at `Math.max(lastPointTimestamp,
+		// fadeOutStart)` lets a keyframe close to the end override the ramp.
+		const lastPoint = points[points.length - 1];
+		const lastPointTimestamp =
+			startTimestamp + (lastPoint.localTime - startLocalTime);
+		const holdStart = Math.max(lastPointTimestamp, fadeOutStart);
+		clipGain.gain.setValueAtTime(lastPoint.gain, holdStart);
+		clipGain.gain.linearRampToValueAtTime(0, clipEndTimestamp);
 	}
 
 	private buildPreparedClipCacheKey({

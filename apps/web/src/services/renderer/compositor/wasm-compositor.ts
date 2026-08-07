@@ -6,6 +6,7 @@ import {
 	renderFrame,
 	resizeCompositor,
 	uploadTexture,
+	uploadVideoFrame,
 } from "opencut-wasm";
 import {
 	incrementCounter,
@@ -17,7 +18,22 @@ import type {
 	FrameDescriptor,
 	RenderedTextureDescriptor,
 	TextureUploadDescriptor,
+	VideoFrameTextureDescriptor,
 } from "./types";
+
+/**
+ * Releases a `VideoFrame` whose GPU-backed texture is no longer needed. The
+ * compositor cache replaces each entry on every new frame during scrub, and
+ * `VideoFrame.toVideoFrame()` returns an independent frame each time, so
+ * without this the previous frame would stay alive until GC.
+ */
+function closeVideoFrame(frame: VideoFrame) {
+	try {
+		frame.close();
+	} catch {
+		// already closed
+	}
+}
 
 /**
  * One slot in the derived-texture cache. The OffscreenCanvas is persistent —
@@ -39,10 +55,20 @@ type ExternalCacheEntry = {
 	height: number;
 };
 
+type VideoFrameCacheEntry = {
+	kind: "video";
+	source: VideoFrame;
+	width: number;
+	height: number;
+};
+
 class WasmCompositor {
 	private canvas: HTMLCanvasElement | null = null;
 	private initializedSize: { width: number; height: number } | null = null;
-	private cache = new Map<string, RenderedCacheEntry | ExternalCacheEntry>();
+	private cache = new Map<
+		string,
+		RenderedCacheEntry | ExternalCacheEntry | VideoFrameCacheEntry
+	>();
 
 	ensureInitialized({ width, height }: { width: number; height: number }) {
 		if (!this.canvas) {
@@ -73,6 +99,10 @@ class WasmCompositor {
 		const nextIds = new Set(textures.map((texture) => texture.id));
 		for (const previousId of this.cache.keys()) {
 			if (!nextIds.has(previousId)) {
+				const previous = this.cache.get(previousId);
+				if (previous?.kind === "video") {
+					closeVideoFrame(previous.source);
+				}
 				releaseTexture(previousId);
 				this.cache.delete(previousId);
 			}
@@ -81,6 +111,8 @@ class WasmCompositor {
 		for (const texture of textures) {
 			if (texture.kind === "external") {
 				this.syncExternalTexture(texture);
+			} else if (texture.kind === "video") {
+				this.syncVideoFrameTexture(texture);
 			} else {
 				this.syncRenderedTexture(texture);
 			}
@@ -126,6 +158,45 @@ class WasmCompositor {
 		});
 		this.cache.set(texture.id, {
 			kind: "external",
+			source: texture.source,
+			width: texture.width,
+			height: texture.height,
+		});
+	}
+
+	private syncVideoFrameTexture(texture: VideoFrameTextureDescriptor) {
+		const previous = this.cache.get(texture.id);
+		if (
+			previous?.kind === "video" &&
+			previous.source === texture.source &&
+			previous.width === texture.width &&
+			previous.height === texture.height
+		) {
+			incrementCounter({ name: "textureCacheHit" });
+			return;
+		}
+
+		// The previous VideoFrame is being replaced; close it so its GPU-backed
+		// texture isn't held until GC. `frame.toVideoFrame()` returns a fresh
+		// frame per scrubbed sample, so without this every render during
+		// playback leaks one VideoFrame.
+		if (previous?.kind === "video") {
+			closeVideoFrame(previous.source);
+		}
+
+		incrementCounter({ name: "textureUpload" });
+		incrementCounter({
+			name: "textureUploadPixels",
+			by: texture.width * texture.height,
+		});
+		uploadVideoFrame({
+			id: texture.id,
+			source: texture.source,
+			width: texture.width,
+			height: texture.height,
+		});
+		this.cache.set(texture.id, {
+			kind: "video",
 			source: texture.source,
 			width: texture.width,
 			height: texture.height,

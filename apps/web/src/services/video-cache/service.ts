@@ -2,21 +2,37 @@ import {
 	Input,
 	ALL_FORMATS,
 	BlobSource,
-	CanvasSink,
-	type WrappedCanvas,
+	VideoSampleSink,
+	type VideoSample,
 } from "mediabunny";
 
 interface VideoSinkData {
 	/** The asset this decoder reads, so it can be released with its media. */
 	mediaId: string;
 	input: Input;
-	sink: CanvasSink;
-	iterator: AsyncGenerator<WrappedCanvas, void, unknown> | null;
-	currentFrame: WrappedCanvas | null;
-	nextFrame: WrappedCanvas | null;
+	sink: VideoSampleSink;
+	iterator: AsyncGenerator<VideoSample, void, unknown> | null;
+	currentFrame: VideoSample | null;
+	nextFrame: VideoSample | null;
 	lastTime: number;
 	prefetching: boolean;
 	prefetchPromise: Promise<void> | null;
+}
+
+/**
+ * Releases the sample and any GPU resources its underlying `VideoFrame` holds.
+ * Mediabunny's `VideoSampleSink` reuses samples from an internal pool, but
+ * once we stop holding a sample the GPU texture the WebCodecs `VideoFrame`
+ * points at can be reclaimed. Without this call we'd leak a `VideoFrame`
+ * per scrubbed frame.
+ */
+function closeSample(sample: VideoSample | null) {
+	if (!sample) return;
+	try {
+		sample.close();
+	} catch {
+		// already closed
+	}
 }
 
 class VideoCache {
@@ -32,7 +48,7 @@ class VideoCache {
 	 * `sinkKey` lets such a clip ask for a decoder of its own. Everything else
 	 * keeps sharing one per asset, which is what makes ordinary playback cheap.
 	 */
-	async getFrameAt({
+	async getSampleAt({
 		mediaId,
 		sinkKey = mediaId,
 		file,
@@ -42,7 +58,7 @@ class VideoCache {
 		sinkKey?: string;
 		file: File;
 		time: number;
-	}): Promise<WrappedCanvas | null> {
+	}): Promise<VideoSample | null> {
 		await this.ensureSink({ sinkKey, mediaId, file });
 
 		const sinkData = this.sinks.get(sinkKey);
@@ -59,7 +75,7 @@ class VideoCache {
 			if (this.seekGenerations.get(sinkKey) !== generation) {
 				return sinkData.currentFrame ?? null;
 			}
-			return this.resolveFrame({ sinkData, time });
+			return this.resolveSample({ sinkData, time });
 		});
 		this.frameChain.set(
 			sinkKey,
@@ -68,14 +84,15 @@ class VideoCache {
 		return current;
 	}
 
-	private async resolveFrame({
+	private async resolveSample({
 		sinkData,
 		time,
 	}: {
 		sinkData: VideoSinkData;
 		time: number;
-	}): Promise<WrappedCanvas | null> {
+	}): Promise<VideoSample | null> {
 		if (sinkData.nextFrame && sinkData.nextFrame.timestamp <= time) {
+			closeSample(sinkData.currentFrame);
 			sinkData.currentFrame = sinkData.nextFrame;
 			sinkData.nextFrame = null;
 			this.startPrefetch({ sinkData });
@@ -117,7 +134,7 @@ class VideoCache {
 		frame,
 		time,
 	}: {
-		frame: WrappedCanvas;
+		frame: VideoSample;
 		time: number;
 	}): boolean {
 		return time >= frame.timestamp && time < frame.timestamp + frame.duration;
@@ -128,7 +145,7 @@ class VideoCache {
 	}: {
 		sinkData: VideoSinkData;
 		targetTime: number;
-	}): Promise<WrappedCanvas | null> {
+	}): Promise<VideoSample | null> {
 		if (!sinkData.iterator) return null;
 
 		try {
@@ -143,6 +160,7 @@ class VideoCache {
 					sinkData.nextFrame &&
 					sinkData.nextFrame.timestamp <= targetTime + 0.05 // Tolerance
 				) {
+					closeSample(sinkData.currentFrame);
 					sinkData.currentFrame = sinkData.nextFrame;
 					sinkData.nextFrame = null;
 				} else {
@@ -150,6 +168,7 @@ class VideoCache {
 
 					if (done || !frame) break;
 
+					closeSample(sinkData.currentFrame);
 					sinkData.currentFrame = frame;
 				}
 
@@ -177,7 +196,7 @@ class VideoCache {
 	}: {
 		sinkData: VideoSinkData;
 		time: number;
-	}): Promise<WrappedCanvas | null> {
+	}): Promise<VideoSample | null> {
 		try {
 			if (sinkData.prefetching && sinkData.prefetchPromise) {
 				await sinkData.prefetchPromise;
@@ -188,14 +207,16 @@ class VideoCache {
 				sinkData.iterator = null;
 			}
 
+			closeSample(sinkData.nextFrame);
 			sinkData.nextFrame = null;
-			sinkData.iterator = sinkData.sink.canvases(time);
+			sinkData.iterator = sinkData.sink.samples(time);
 			sinkData.lastTime = time;
 
 			// Fetch current frame
 			const { value: frame } = await sinkData.iterator.next();
 
 			if (frame) {
+				closeSample(sinkData.currentFrame);
 				sinkData.currentFrame = frame;
 				this.startPrefetch({ sinkData });
 				return frame;
@@ -236,6 +257,7 @@ class VideoCache {
 				return;
 			}
 
+			closeSample(sinkData.nextFrame);
 			sinkData.nextFrame = frame;
 			sinkData.prefetching = false;
 			sinkData.prefetchPromise = null;
@@ -296,9 +318,8 @@ class VideoCache {
 				throw new Error("Video codec not supported for decoding");
 			}
 
-			const sink = new CanvasSink(videoTrack, {
-				poolSize: 3,
-				fit: "contain",
+			const sink = new VideoSampleSink(videoTrack, {
+				optimizeForLatency: true,
 			});
 
 			this.sinks.set(sinkKey, {
@@ -341,9 +362,21 @@ class VideoCache {
 	private clearSink({ sinkKey }: { sinkKey: string }): void {
 		const sinkData = this.sinks.get(sinkKey);
 		if (sinkData) {
+			// Returning the iterator first releases the underlying VideoDecoder.
+			// Closing the samples before that would race the decoder's own
+			// cleanup and surface as "Cannot call 'close' on a closed codec".
 			if (sinkData.iterator) {
-				void sinkData.iterator.return();
+				const iterator = sinkData.iterator;
+				sinkData.iterator = null;
+				iterator.return().catch(() => {
+					// Decoder already closed, or the iterator was never drained.
+				});
 			}
+
+			closeSample(sinkData.currentFrame);
+			closeSample(sinkData.nextFrame);
+			sinkData.currentFrame = null;
+			sinkData.nextFrame = null;
 
 			sinkData.input.dispose();
 			this.sinks.delete(sinkKey);

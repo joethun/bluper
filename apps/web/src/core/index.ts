@@ -48,25 +48,6 @@ export class EditorCore {
 		this.clipboard = new ClipboardManager(this);
 		this.diagnostics = new DiagnosticsManager(this);
 		this.playback.bindTimelineScope();
-		this.command.registerReactor(() => {
-			const activeScene = this.scenes.getActiveSceneOrNull();
-			if (!activeScene) {
-				return;
-			}
-
-			const tracks = activeScene.tracks;
-			const prunedTracks = {
-				...tracks,
-				overlay: tracks.overlay.filter((track) => track.elements.length > 0),
-				audio: tracks.audio.filter((track) => track.elements.length > 0),
-			};
-			if (
-				prunedTracks.overlay.length !== tracks.overlay.length ||
-				prunedTracks.audio.length !== tracks.audio.length
-			) {
-				this.timeline.updateTracks(prunedTracks);
-			}
-		});
 		this.save.start();
 	}
 

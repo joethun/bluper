@@ -1,8 +1,6 @@
 import type { WheelEvent as ReactWheelEvent } from "react";
-import { TIMELINE_ZOOM_ANCHOR_PLAYHEAD_THRESHOLD } from "@/timeline/components/interaction";
-import { timelineTimeToPixels } from "@/timeline/pixel-utils";
 import { TIMELINE_ZOOM_MAX } from "@/timeline/scale";
-import { zoomToSlider } from "@/timeline/zoom-utils";
+import { publishProgrammaticScroll } from "@/timeline/scroll-sync";
 import type { MediaTime } from "@/wasm";
 
 type ZoomUpdater = number | ((prev: number) => number);
@@ -54,8 +52,6 @@ export class ZoomController {
 	private hasRestoredScroll = false;
 	private previousZoom: number;
 	private preZoomScrollLeft = 0;
-	private prePlayheadAnchorScrollLeft = 0;
-	private isInPlayheadAnchorMode = false;
 	private scrollSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(deps: { configRef: ZoomConfigRef; initialZoom?: number }) {
@@ -161,57 +157,11 @@ export class ZoomController {
 			return;
 		}
 
-		const currentScrollLeft = this.preZoomScrollLeft;
-		const playheadTime = this.config.getCurrentPlayheadTime();
-		const sliderPercent = zoomToSlider({
-			zoomLevel,
-			minZoom: this.config.minZoom,
+		const maxScrollLeft = this.config.getMaxScrollLeft({ zoomLevel });
+		this.syncScrollLeft({
+			scrollElement,
+			scrollLeft: Math.max(0, Math.min(maxScrollLeft, this.preZoomScrollLeft)),
 		});
-		const previousSliderPercent = zoomToSlider({
-			zoomLevel: previousZoom,
-			minZoom: this.config.minZoom,
-		});
-		const isCrossingThresholdUp =
-			previousSliderPercent < TIMELINE_ZOOM_ANCHOR_PLAYHEAD_THRESHOLD &&
-			sliderPercent >= TIMELINE_ZOOM_ANCHOR_PLAYHEAD_THRESHOLD;
-		const isCrossingThresholdDown =
-			previousSliderPercent >= TIMELINE_ZOOM_ANCHOR_PLAYHEAD_THRESHOLD &&
-			sliderPercent < TIMELINE_ZOOM_ANCHOR_PLAYHEAD_THRESHOLD;
-
-		const syncScroll = (scrollLeft: number) => {
-			scrollElement.scrollLeft = scrollLeft;
-			const ruler = this.config.getRulerScrollEl();
-			if (ruler) {
-				ruler.scrollLeft = scrollLeft;
-			}
-		};
-
-		const clampScrollLeft = (scrollLeft: number) => {
-			const maxScrollLeft = this.config.getMaxScrollLeft({ zoomLevel });
-			return Math.max(0, Math.min(maxScrollLeft, scrollLeft));
-		};
-
-		if (isCrossingThresholdUp) {
-			this.prePlayheadAnchorScrollLeft = currentScrollLeft;
-			this.isInPlayheadAnchorMode = true;
-		}
-
-		if (sliderPercent >= TIMELINE_ZOOM_ANCHOR_PLAYHEAD_THRESHOLD) {
-			const playheadPixelsBefore = timelineTimeToPixels({
-				time: playheadTime,
-				zoomLevel: previousZoom,
-			});
-			const playheadPixelsAfter = timelineTimeToPixels({
-				time: playheadTime,
-				zoomLevel,
-			});
-			const viewportOffset = playheadPixelsBefore - currentScrollLeft;
-			const nextScrollLeft = playheadPixelsAfter - viewportOffset;
-			syncScroll(clampScrollLeft(nextScrollLeft));
-		} else if (isCrossingThresholdDown && this.isInPlayheadAnchorMode) {
-			syncScroll(clampScrollLeft(this.prePlayheadAnchorScrollLeft));
-			this.isInPlayheadAnchorMode = false;
-		}
 
 		this.previousZoom = zoomLevel;
 
@@ -248,11 +198,7 @@ export class ZoomController {
 		if (!scrollElement) return;
 
 		const restoreScroll = () => {
-			scrollElement.scrollLeft = initialScrollLeft;
-			const ruler = this.config.getRulerScrollEl();
-			if (ruler) {
-				ruler.scrollLeft = initialScrollLeft;
-			}
+			this.syncScrollLeft({ scrollElement, scrollLeft: initialScrollLeft });
 			this.hasRestoredScroll = true;
 			this.preZoomScrollLeft = initialScrollLeft;
 		};
@@ -270,6 +216,22 @@ export class ZoomController {
 		});
 		observer.observe(scrollElement);
 		return () => observer.disconnect();
+	}
+
+	private syncScrollLeft({
+		scrollElement,
+		scrollLeft,
+	}: {
+		scrollElement: HTMLElement;
+		scrollLeft: number;
+	}): void {
+		scrollElement.scrollLeft = scrollLeft;
+		publishProgrammaticScroll({ element: scrollElement });
+		const ruler = this.config.getRulerScrollEl();
+		if (ruler) {
+			ruler.scrollLeft = scrollLeft;
+			publishProgrammaticScroll({ element: ruler });
+		}
 	}
 
 	restoreInitialPlayheadIfNeeded(initialPlayheadTime?: MediaTime): void {
