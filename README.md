@@ -6,7 +6,7 @@
 
 <a href="https://bluper.netlify.app">bluper.netlify.app</a>
 
-This is a fork of Opencut Classic that fixes bugs and adds a bunch of missing features that are in CapCut. **It is not ready for actual use.** 
+This is a fork of Opencut Classic that fixes bugs and adds a bunch of missing features that are in CapCut.
 
 </div>
 
