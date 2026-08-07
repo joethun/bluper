@@ -13,7 +13,6 @@ The single source of truth for all non-UI code. Everything platform-agnostic bel
 Each app is a frontend that calls into Rust. Logic is never duplicated between apps — only UI is, because each platform may use an entirely different framework and language to build it.
 
 - `web/` — Next.js
-- `desktop/` — GPUI
 
 ## Web
 

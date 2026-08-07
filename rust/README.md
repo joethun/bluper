@@ -1,6 +1,6 @@
 # rust/
 
-Shared Rust crates that power Bluper across platforms (web via WASM, desktop natively).
+Shared Rust crates that power Bluper across platforms (web via WASM).
 
 ## Adding a new crate
 
@@ -25,8 +25,6 @@ Without the `wasm` feature, the macro is a no-op. With `--features wasm`, it exp
 #[wasm_bindgen(js_name = "roundToFrame")]
 pub fn round_to_frame(time: f64, fps: f64) -> f64 { ... }
 ```
-
-Desktop uses the crates directly as Cargo dependencies.
 
 ## Testing
 
