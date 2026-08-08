@@ -1,21 +1,12 @@
 import type { FrameRate } from "opencut-wasm";
 import { EXPORT_MIME_TYPES } from "./mime-types";
 
-export const EXPORT_QUALITY_VALUES = [
-	"low",
-	"medium",
-	"high",
-	"very_high",
-] as const;
-
 export const EXPORT_FORMAT_VALUES = ["mp4", "webm"] as const;
 
 export type ExportFormat = (typeof EXPORT_FORMAT_VALUES)[number];
-export type ExportQuality = (typeof EXPORT_QUALITY_VALUES)[number];
 
 export interface ExportOptions {
 	format: ExportFormat;
-	quality: ExportQuality;
 	fps?: FrameRate;
 	includeAudio?: boolean;
 }

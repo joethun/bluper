@@ -7,17 +7,14 @@ import {
 	StreamTarget,
 	CanvasSource,
 	AudioBufferSource,
-	QUALITY_LOW,
-	QUALITY_MEDIUM,
-	QUALITY_HIGH,
-	QUALITY_VERY_HIGH,
+	Quality,
 } from "mediabunny";
-import type { StreamTargetChunk } from "mediabunny";
+import type { StreamTargetChunk, VideoCodec } from "mediabunny";
 import type { FrameRate } from "opencut-wasm";
 import { mediaTimeToSeconds } from "opencut-wasm";
 import { TICKS_PER_SECOND } from "@/wasm";
 import { frameRateToFloat } from "@/fps/utils";
-import type { ExportArtifact, ExportFormat, ExportQuality } from "@/export";
+import type { ExportArtifact, ExportFormat } from "@/export";
 import { OPFSExportTarget } from "@/services/export/opfs-export-target";
 import { getExportServiceWorkerStatus } from "@/services/export/export-sw-bridge";
 import type { RootNode } from "./nodes/root-node";
@@ -28,17 +25,27 @@ type ExportParams = {
 	height: number;
 	fps: FrameRate;
 	format: ExportFormat;
-	quality: ExportQuality;
+	/**
+	 * Target bitrate in bits per second, taken from the source video so the
+	 * export lands at the same size and quality as what the user imported.
+	 */
+	videoBitrate: number;
+	/**
+	 * Codec to encode with. Should match the source codec when the browser
+	 * supports encoding it; otherwise the caller falls back to the format's
+	 * default (avc for mp4, vp9 for webm).
+	 */
+	videoCodec: VideoCodec;
 	shouldIncludeAudio?: boolean;
 	audioBuffer?: AudioBuffer;
 };
 
-const qualityMap = {
-	low: QUALITY_LOW,
-	medium: QUALITY_MEDIUM,
-	high: QUALITY_HIGH,
-	very_high: QUALITY_VERY_HIGH,
-};
+/**
+ * Audio is independent of video quality. 192 kbps AAC / 128 kbps Opus is
+ * transparent for stereo music and well above what's needed for spoken word.
+ */
+const AAC_AUDIO_BITRATE = 192_000;
+const OPUS_AUDIO_BITRATE = 128_000;
 
 export type SceneExporterEvents = {
 	progress: [progress: number];
@@ -66,7 +73,8 @@ const PREVIEW_FRAME_INTERVAL_MS = 100;
 export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	private renderer: CanvasRenderer;
 	private format: ExportFormat;
-	private quality: ExportQuality;
+	private videoBitrate: number;
+	private videoCodec: VideoCodec;
 	private shouldIncludeAudio: boolean;
 	private audioBuffer?: AudioBuffer;
 
@@ -77,7 +85,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		height,
 		fps,
 		format,
-		quality,
+		videoBitrate,
+		videoCodec,
 		shouldIncludeAudio,
 		audioBuffer,
 	}: ExportParams) {
@@ -89,7 +98,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		});
 
 		this.format = format;
-		this.quality = quality;
+		this.videoBitrate = videoBitrate;
+		this.videoCodec = videoCodec;
 		this.shouldIncludeAudio = shouldIncludeAudio ?? false;
 		this.audioBuffer = audioBuffer;
 	}
@@ -127,8 +137,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 		const outputCanvas = this.renderer.getOutputCanvas();
 		const videoSource = new CanvasSource(outputCanvas, {
-			codec: this.format === "webm" ? "vp9" : "avc",
-			bitrate: qualityMap[this.quality],
+			codec: this.videoCodec,
+			bitrate: new Quality({ bitrate: this.videoBitrate }),
 		});
 
 		output.addVideoTrack(videoSource, { frameRate: fpsFloat });
@@ -136,20 +146,22 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		let audioSource: AudioBufferSource | null = null;
 		if (this.shouldIncludeAudio && this.audioBuffer) {
 			let audioCodec: "aac" | "opus" = this.format === "webm" ? "opus" : "aac";
+			const audioBitrate =
+				audioCodec === "aac" ? AAC_AUDIO_BITRATE : OPUS_AUDIO_BITRATE;
 
 			if (audioCodec === "aac" && typeof AudioEncoder !== "undefined") {
 				const { supported } = await AudioEncoder.isConfigSupported({
 					codec: "mp4a.40.2",
 					sampleRate: this.audioBuffer.sampleRate,
 					numberOfChannels: this.audioBuffer.numberOfChannels,
-					bitrate: 192000,
+					bitrate: audioBitrate,
 				});
 				if (!supported) audioCodec = "opus";
 			}
 
 			audioSource = new AudioBufferSource({
 				codec: audioCodec,
-				bitrate: qualityMap[this.quality],
+				bitrate: new Quality({ bitrate: audioBitrate }),
 			});
 			output.addAudioTrack(audioSource);
 		}

@@ -697,6 +697,23 @@ async function resolveBackdropSource({
 	node: BlurBackgroundNode;
 	clipTime: number;
 }): Promise<BackdropSource | null> {
+	// The blur-background path goes through the compositor's "rendered" branch
+	// (a 2D canvas blit, then `uploadTexture`), not the direct-GPU video path.
+	// The video branch's `closeVideoFrame` cleanup never runs on this code
+	// path, so the WebCodecs frame backing last frame's resolved state would
+	// otherwise be GC'd without ever being closed — and the browser's
+	// finalizer logs a stall warning each time. Release the previous frame
+	// right before we mint a new one, so the swap is atomic from the GPU's
+	// point of view.
+	const previous = node.resolved?.backdropSource?.source;
+	if (previous instanceof VideoFrame) {
+		try {
+			previous.close();
+		} catch {
+			// already closed
+		}
+	}
+
 	if (node.params.mediaType === "video") {
 		const sourceTime = resolveSampledSourceTime({
 			freeze: node.params.freeze,

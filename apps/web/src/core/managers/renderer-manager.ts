@@ -6,6 +6,7 @@ import { SceneExporter } from "@/services/renderer/scene-exporter";
 import { buildScene } from "@/services/renderer/scene-builder";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import { formatTimecode } from "opencut-wasm";
+import { resolveSourceEncoding } from "@/services/renderer/source-encoding";
 import { downloadBlob } from "@/utils/browser";
 
 type SnapshotResult =
@@ -154,7 +155,7 @@ export class RendererManager {
 		onFrame?: ({ source }: { source: HTMLCanvasElement }) => void;
 		onCancel?: () => boolean;
 	}): Promise<ExportResult> {
-		const { format, quality, fps, includeAudio } = options;
+		const { format, fps, includeAudio } = options;
 
 		try {
 			const tracks = this.editor.scenes.getActiveScene().tracks;
@@ -172,6 +173,15 @@ export class RendererManager {
 
 			const exportFps = fps ?? activeProject.settings.fps;
 			const canvasSize = activeProject.settings.canvasSize;
+
+			// Match the source video's bitrate and codec so the export lands at
+			// the same size and quality as the input — no presets for the user
+			// to pick, and no surprise ballooning when the source is already
+			// low-bitrate.
+			const sourceEncoding = await resolveSourceEncoding({
+				mediaAssets,
+				format,
+			});
 
 			let audioBuffer: AudioBuffer | null = null;
 			if (includeAudio) {
@@ -225,7 +235,8 @@ export class RendererManager {
 				height: canvasSize.height,
 				fps: exportFps,
 				format,
-				quality,
+				videoBitrate: sourceEncoding.bitrate,
+				videoCodec: sourceEncoding.codec,
 				shouldIncludeAudio: !!includeAudio,
 				audioBuffer: audioBuffer || undefined,
 			});

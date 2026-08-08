@@ -225,7 +225,7 @@ class WasmCompositor {
 						height: texture.height,
 					});
 
-		const ctx = canvas.getContext("2d");
+		const ctx = canvas.getContext("2d", { willReadFrequently: true });
 		if (!ctx) {
 			throw new Error(`Failed to get 2d context for texture ${texture.id}`);
 		}
@@ -288,7 +288,7 @@ function ensureOffscreenCanvas({
 	}
 
 	const canvas = new OffscreenCanvas(width, height);
-	const context = canvas.getContext("2d");
+	const context = canvas.getContext("2d", { willReadFrequently: true });
 	if (!context) {
 		throw new Error(`Failed to get 2d context for ${label}`);
 	}
