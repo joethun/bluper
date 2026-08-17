@@ -1,0 +1,19 @@
+[package]
+name = "effects"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/effects.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+bytemuck = { version = "1.25.0", features = ["derive"] }
+gpu = { version = "0.1.0", path = "../gpu" }
+thiserror = "2.0.18"
+wgpu = "29.0.1"
+
+[dev-dependencies]
+# Validates the WGSL at test time; `create_shader_module` only fails at runtime,
+# which on the desktop shell means a black preview instead of a build error.
+naga = { version = "29.0.1", features = ["wgsl-in"] }

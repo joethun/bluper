@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities granted to the Bluper editor window.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:default",
+    "core:webview:default",
+    "core:app:default",
+    "core:event:default",
+    "core:path:default",
+    "core:resources:default",
+    "core:menu:default",
+    "core:tray:default",
+    "dialog:default",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "dialog:allow-confirm",
+    "opener:default",
+    "opener:allow-open-path",
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
+    "log:default"
+  ]
+}

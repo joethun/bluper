@@ -1,0 +1,22 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: ./apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_SITE_URL=http://localhost:3100
+    healthcheck:
+      # The editor has no API routes; the root page is what proves it is serving.
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+networks:
+  default:
+    name: bluper-network

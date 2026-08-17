@@ -1,0 +1,41 @@
+[package]
+name = "bluper-desktop"
+version = "0.1.0"
+description = "Bluper desktop shell (Tauri 2 + WebKitGTK)"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+[lib]
+name = "bluper_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `protocol-asset` serves media straight off the filesystem to the webview with
+# range requests, which is how a multi-gigabyte clip plays without ever being
+# copied into the page's memory.
+tauri = { version = "2", features = ["protocol-asset", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-log = "2"
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
+
+# Both only exist to answer `bluper_available_disk_bytes` with the real free
+# space on the volume holding the media directory, which neither `std` nor the
+# webview can report.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Storage_FileSystem",
+    # Reattaching stdout to the launching terminal, so the self-check is
+    # readable from a release build (see `attach_parent_console`).
+    "Win32_System_Console",
+] }
+
+# The release profile lives at the workspace root; Cargo ignores it here.

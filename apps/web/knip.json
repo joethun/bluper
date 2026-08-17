@@ -1,0 +1,15 @@
+{
+	"$schema": "https://unpkg.com/knip@5/schema.json",
+	"entry": [
+		"src/app/**/{page,layout,route,default,error,not-found,global-error,template,loading,sitemap,robots,opengraph-image,icon,apple-icon,manifest}.{ts,tsx}",
+		"scripts/**/*.ts",
+		"src/types/**/*.d.ts"
+	],
+	"project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],
+	"ignoreBinaries": ["eslint", "prettier"],
+	"ignoreDependencies": [
+		"tailwindcss-animate",
+		"@tailwindcss/typography",
+		"tailwindcss"
+	]
+}

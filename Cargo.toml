@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = [
+    "rust/crates/time",
+    "rust/crates/bridge",
+    "rust/crates/effects",
+    "rust/crates/gpu",
+    "rust/crates/masks",
+    "rust/wasm",
+    "rust/crates/compositor",
+    "apps/desktop/src-tauri",
+]
+
+# Cargo ignores a `[profile]` in a non-root manifest, so these have to live here
+# to take effect at all — the desktop shell declared them and was silently
+# getting the default release profile instead.
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

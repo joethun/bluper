@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "bluper-desktop",
+  "version": "0.1.0",
+  "identifier": "net.bluper.desktop",
+  "build": {
+    "beforeDevCommand": "bun run dev:web",
+    "beforeBuildCommand": "bun run build:web:export",
+    "devUrl": "http://localhost:3000",
+    "frontendDist": "../../web/out"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Bluper",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob: https: asset: http://asset.localhost; media-src 'self' data: blob: mediabunny: opfs: asset: http://asset.localhost; font-src 'self' data: https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; script-src 'self' 'unsafe-eval' 'unsafe-inline' https://cdn.databuddy.cc https://unpkg.com; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https: ws:; worker-src 'self' blob:; child-src 'self' blob:; frame-src 'self'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/projects/**", "$APPCACHE/exports/**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm"],
+    "category": "Video",
+    "shortDescription": "Privacy-first video editor",
+    "longDescription": "Bluper is a fork of Opencut that fixes bugs and adds transitions, fades, freeze frames, effects, and adjustments. Your videos stay on your device.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "depends": [],
+        "desktopTemplate": "bluper.desktop"
+      },
+      "rpm": {
+        "depends": [],
+        "desktopTemplate": "bluper.desktop"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      }
+    }
+  }
+}

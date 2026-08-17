@@ -1,0 +1,48 @@
+{
+  "name": "bluper",
+  "packageManager": "bun@1.2.18",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:wasm": "wasm-pack build rust/wasm --target bundler --out-dir pkg && bun install",
+    "build:web": "turbo run build --filter=@bluper/web",
+    "build:web:export": "cd apps/web && NEXT_OUTPUT=export NEXT_PUBLIC_STATIC_EXPORT=1 bun run build",
+    "build:desktop": "turbo run build --filter=@bluper/desktop",
+    "deploy:web": "turbo run deploy --filter=@bluper/web",
+    "dev:wasm": "cargo watch -w rust/crates -w rust/wasm/src -s 'wasm-pack build rust/wasm --target bundler --out-dir pkg'",
+    "dev:web": "turbo run dev --filter=@bluper/web",
+    "dev:desktop": "turbo run dev --filter=@bluper/desktop",
+    "check:desktop": "cd apps/desktop && bunx tauri build --no-bundle && BLUPER_SELFTEST=1 ../../target/release/bluper-desktop",
+    "format:web": "prettier apps/web/src/services/renderer --write",
+    "generate:fonts": "npx tsx apps/web/scripts/generate-font-sprites.ts",
+    "lint:web": "eslint apps/web/src --ext .ts,.tsx",
+    "lint:web:fix": "eslint apps/web/src --ext .ts,.tsx --fix",
+    "preview:web": "turbo run preview --filter=@bluper/web",
+    "publish:wasm": "bun run build:wasm && npm publish rust/wasm/pkg --access public"
+  },
+  "dependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "next": "^16.3.0",
+    "opencut-wasm": "file:./rust/wasm/pkg"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@next/eslint-plugin-next": "^16.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6",
+    "turbo": "^2.10.8",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.66.0"
+  },
+  "trustedDependencies": [
+    "@tailwindcss/oxide"
+  ]
+}
