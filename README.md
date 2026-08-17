@@ -16,7 +16,7 @@ Bluper is a video editor based on [OpenCut Classic](https://github.com/opencut-a
 - Fade in and out
 - Adjust
 - Effects
-- Wider format support: MKV, MOV, MPEG-TS/M2TS, FLAC, Opus, AAC and more on import, whether or not the OS names the file
+- Wider format support: MKV, MOV, MPEG-TS/M2TS, FLAC, Opus, AAC and more on import
 - More export options: MP4, MOV, MKV and WebM, audio-only M4A, WAV and OGG, and a codec picker offering whatever your machine can encode
 - Minor UI changes
 - Numerous bug fixes
