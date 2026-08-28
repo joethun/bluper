@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# Screenshots the real desktop shell.
+#
+# There is no browser build to look at the UI in, and a browser tab could not
+# show media anyway — every media path needs the Tauri runtime. So this drives
+# the actual window: it opens the shell on a route, optionally runs a snippet to
+# get the screen into the state you want, grabs the window, and exits.
+#
+#   script/capture-window --route / --out projects.png
+#   script/capture-window --route '/editor/_/?project=<id>' --settle 6
+#   script/capture-window --eval 'document.querySelector("[data-panel]").click()'
+#
+# The window is forced onto XWayland (GDK_BACKEND=x11) because that is what lets
+# an X11 grab find it by name; KDE and GNOME both refuse a Wayland client to
+# anything but their own screenshot UI, which needs a human.
+set -euo pipefail
+
+ROUTE="/"
+EVAL_JS=""
+OUT="capture.png"
+SETTLE=2
+BINARY="target/release/bluper-desktop"
+WINDOW_NAME="Bluper"
+# Long enough for a cold start with a GPU init behind it.
+LAUNCH_TIMEOUT=60
+
+usage() {
+	sed -n '3,14p' "$0" | sed 's/^# \{0,1\}//'
+	exit "${1:-0}"
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--route) ROUTE="$2"; shift 2 ;;
+		--eval) EVAL_JS="$2"; shift 2 ;;
+		--out) OUT="$2"; shift 2 ;;
+		--settle) SETTLE="$2"; shift 2 ;;
+		--binary) BINARY="$2"; shift 2 ;;
+		-h|--help) usage 0 ;;
+		*) echo "unknown argument: $1" >&2; usage 1 ;;
+	esac
+done
+
+command -v import >/dev/null 2>&1 || {
+	echo "capture-window: needs ImageMagick's 'import' (dnf install ImageMagick)" >&2
+	exit 1
+}
+[ -n "${DISPLAY:-}" ] || {
+	echo "capture-window: no DISPLAY; an X server or XWayland has to be running" >&2
+	exit 1
+}
+[ -x "$BINARY" ] || {
+	echo "capture-window: no shell at $BINARY — build it first:" >&2
+	echo "    cd apps/desktop && bunx tauri build --no-bundle" >&2
+	exit 1
+}
+
+LOG="$(mktemp -t bluper-capture-XXXXXX.log)"
+GDK_BACKEND=x11 BLUPER_START_PATH="$ROUTE" BLUPER_EVAL="$EVAL_JS" \
+	"$BINARY" >"$LOG" 2>&1 &
+APP=$!
+
+cleanup() {
+	kill "$APP" 2>/dev/null || true
+	wait "$APP" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# Poll for the window instead of guessing how long a cold start takes.
+mapped=""
+for _ in $(seq 1 "$LAUNCH_TIMEOUT"); do
+	if ! kill -0 "$APP" 2>/dev/null; then
+		echo "capture-window: the shell exited before its window appeared" >&2
+		cat "$LOG" >&2
+		exit 1
+	fi
+	if import -window "$WINDOW_NAME" -silent "$OUT" 2>/dev/null; then
+		mapped=1
+		break
+	fi
+	sleep 1
+done
+
+[ -n "$mapped" ] || {
+	echo "capture-window: no window named '$WINDOW_NAME' after ${LAUNCH_TIMEOUT}s" >&2
+	cat "$LOG" >&2
+	exit 1
+}
+
+# The first grab only proves the window is mapped. Media decodes, the first
+# composite, and anything --eval kicked off all land after that, so settle and
+# take the frame that actually gets kept.
+sleep "$SETTLE"
+import -window "$WINDOW_NAME" -silent "$OUT"
+
+echo "captured $(identify -format '%wx%h' "$OUT" 2>/dev/null || echo '?') -> $OUT"
+grep -E '^\[bluper\]' "$LOG" || true

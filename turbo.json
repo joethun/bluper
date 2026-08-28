@@ -1,0 +1,50 @@
+{
+	"$schema": "https://turborepo.com/schema.json",
+	"tasks": {
+		"//#build:wasm": {
+			"inputs": [
+				"Cargo.toml",
+				"Cargo.lock",
+				"rust/crates/**",
+				"rust/wasm/src/**",
+				"rust/wasm/Cargo.toml"
+			],
+			"outputs": ["rust/wasm/pkg/**"]
+		},
+		"//#build:wasm:node": {
+			"inputs": [
+				"Cargo.toml",
+				"Cargo.lock",
+				"rust/crates/**",
+				"rust/wasm/src/**",
+				"rust/wasm/Cargo.toml"
+			],
+			"outputs": ["rust/wasm/pkg-node/**"]
+		},
+		"build": {
+			"dependsOn": ["^build"],
+			"outputs": [
+				".next/**",
+				"!.next/cache/**",
+				"out/**",
+				"../src-tauri/target/**"
+			],
+			"env": ["NODE_ENV"]
+		},
+		"dev": {
+			"persistent": true,
+			"cache": false
+		},
+		"lint": {
+			"dependsOn": ["^lint"],
+			"cache": false
+		},
+		"lint:fix": {
+			"dependsOn": ["^lint:fix"],
+			"cache": false
+		},
+		"format": {
+			"dependsOn": ["^format"]
+		}
+	}
+}

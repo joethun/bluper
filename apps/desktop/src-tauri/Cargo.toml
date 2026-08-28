@@ -1,0 +1,54 @@
+[package]
+name = "bluper-desktop"
+version = "0.1.0"
+description = "Bluper desktop shell (Tauri 2 + WebKitGTK)"
+edition = "2021"
+# `LazyLock` (native_fs.rs) is stable from 1.80; 1.77 made clippy flag every use.
+rust-version = "1.80"
+publish = false
+
+[lib]
+name = "bluper_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `protocol-asset` serves media straight off the filesystem to the webview with
+# range requests, which is how a multi-gigabyte clip plays without ever being
+# copied into the page's memory.
+tauri = { version = "2", features = ["protocol-asset", "image-png"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-log = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+# `bluper_decode_video_gop` and its siblings demux a video into per-GOP scratch
+# files the webview reads over `asset:`. The Rust side owns container parsing
+# so the webview never has to ship mediabunny's demuxer.
+ffmpeg-next = "9"
+# Codec extradata (`avcC`, `hvcC`, `vpcC`, `av1C`) crosses the IPC boundary as
+# a base64 string the webview hands straight to `VideoDecoder`'s `description`.
+base64 = "0.22"
+# Only for the waveform peak fold. The webview still has its own copy compiled
+# to wasm for the browser build, and the two have to agree bucket for bucket —
+# sharing the function is what guarantees that rather than hoping.
+editor-core = { path = "../../../rust/crates/editor-core" }
+
+# Both only exist to answer `bluper_available_disk_bytes` with the real free
+# space on the volume holding the media directory, which neither `std` nor the
+# webview can report.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Storage_FileSystem",
+    # Reattaching stdout to the launching terminal, so the self-check is
+    # readable from a release build (see `attach_parent_console`).
+    "Win32_System_Console",
+] }
+
+# The release profile lives at the workspace root; Cargo ignores it here.

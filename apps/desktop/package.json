@@ -1,0 +1,18 @@
+{
+  "name": "@bluper/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "bun@1.2.18",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "build:debug": "tauri build --debug",
+    "build:web": "cd ../.. && bun run build:web",
+    "dev:web": "cd ../.. && bun run dev:web",
+    "icons": "tauri icon apps/web/public/icons/android-icon-192x192.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

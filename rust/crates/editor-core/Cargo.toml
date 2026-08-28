@@ -1,0 +1,51 @@
+# Named `editor-core` rather than `core`: a local crate named `core` shadows
+# Rust's built-in `core` in the extern prelude of every dependent crate, which
+# makes `::core::mem` and friends unreachable there. The directory kept the
+# original scaffolding's intent; the package name avoids the collision.
+[package]
+name = "editor-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/editor_core.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+bridge = { version = "0.1.0", path = "../bridge" }
+serde = { version = "1", features = ["derive"] }
+# Sub-domains the model does not type yet — effects, masks, adjustments,
+# transitions, animation channels — ride through as opaque values so a command
+# that rewrites a tree cannot silently drop them.
+serde_json = "1"
+time = { version = "0.1.0", path = "../time" }
+tsify-next = { version = "0.5", optional = true }
+wasm-bindgen = { version = "0.2.115", optional = true }
+# `js_sys` is wasm-only — the typed-array bridge (`Float32Array`,
+# `Uint32Array`) lives here. The dependency is gated on the `wasm`
+# feature so native builds don't pull in the wasm-specific bindings.
+js-sys = { version = "0.3", optional = true }
+
+# The encoder pipeline. `ffmpeg-next` is the only Rust crate that ships
+# both an mp4 muxer (`format::output`) and a H.264 + AAC encoder path
+# (`libx264`/`aac`). It does not build on `wasm32-unknown-unknown` —
+# ffmpeg is a native C library — so the dep is target-gated. WASM never
+# reaches the encoder: this commit ships step 3 as native-side code
+# exercised from `/desktop-check` and by future Rust callers. When the
+# `desktop` shell wants to run it, it links through `editor-core` and
+# shares the same `ffmpeg-next` build as `media_audio.rs` already does.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ffmpeg-next = "9"
+# Sample-rate conversion. The Rust audio mixer resamples every source
+# clip's native rate to the timeline rate with a fixed Sinc polyphase
+# filter; `rubato` is the only crate on `crates.io` that ships one in
+# pure Rust. Gated native because every other piece lives in
+# `editor-core`'s non-wasm build.
+rubato = "0.16"
+
+[dev-dependencies]
+# Used only to prove the validator ignores the untyped `tracks` payload.
+serde_json = "1"
+
+[features]
+wasm = ["dep:wasm-bindgen", "dep:tsify-next", "tsify-next/js", "time/wasm", "dep:js-sys"]
