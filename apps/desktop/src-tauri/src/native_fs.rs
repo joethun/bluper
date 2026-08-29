@@ -567,6 +567,96 @@ fn available_bytes(_path: &Path) -> Option<u64> {
     None
 }
 
+/* -------------------------------------------------------------------------- */
+/* Referenced media                                                           */
+/* -------------------------------------------------------------------------- */
+
+/// What a file outside the app's own directories looks like right now.
+///
+/// Media imported by reference is never copied, so a project holds a path and
+/// nothing else. Whether the file is still there, still the same length and
+/// still carries the same modification time is the whole of its identity, and
+/// the three together are what a relink check compares.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStat {
+    pub path: String,
+    pub size: u64,
+    /// Milliseconds since the Unix epoch, matching `File.lastModified` so a
+    /// referenced file and a copied one are compared on the same scale.
+    pub last_modified: u64,
+}
+
+fn last_modified_ms(metadata: &fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|delta| delta.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Describes any file on the filesystem, or `None` when there isn't one.
+///
+/// A missing file is the ordinary case for referenced media — a card ejected,
+/// a folder moved, an external drive unplugged — and the editor answers it
+/// with a relink prompt rather than an error, so it is reported as absence
+/// instead of failure. A path that resolves to a directory is `None` too: it
+/// is not media, and saying so here keeps the caller from opening it.
+#[tauri::command]
+pub fn bluper_stat_file(path: String) -> Result<Option<FileStat>> {
+    let path = PathBuf::from(&path);
+    let metadata = match fs::metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+
+    Ok(Some(FileStat {
+        path: path.to_string_lossy().into_owned(),
+        size: metadata.len(),
+        last_modified: last_modified_ms(&metadata),
+    }))
+}
+
+/// Grants the `asset:` protocol read access to one file outside the app's own
+/// directories, and returns the path the protocol will match on.
+///
+/// `tauri.conf.json` scopes the protocol to the app data and cache folders,
+/// which is right for everything the app writes itself. Referenced media lives
+/// wherever the user keeps it, so each file is allowed by name as it is
+/// imported or reloaded — a directory glob broad enough to cover "wherever the
+/// user keeps video" would hand the webview most of the disk.
+///
+/// The grant lives in memory for the life of the process, so a project reopened
+/// in a later run allows its files again while it loads.
+#[tauri::command]
+pub fn bluper_allow_media_file<R: Runtime>(app: AppHandle<R>, path: String) -> Result<String> {
+    // Canonicalise first so the scope entry matches what the protocol resolves
+    // a request to. A file reached through a symlink or a `..` would otherwise
+    // be allowed under one spelling and requested under another, and the
+    // request would be refused with nothing to show for it.
+    let canonical = fs::canonicalize(&path)?;
+    if !canonical.is_file() {
+        return Err(err(format!("{} is not a file", canonical.display())));
+    }
+
+    app.asset_protocol_scope()
+        .allow_file(&canonical)
+        .map_err(|error| {
+            err(format!(
+                "could not grant access to {}: {error}",
+                canonical.display()
+            ))
+        })?;
+
+    Ok(canonical.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -17,6 +17,8 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -28,9 +30,9 @@ import { DEFAULT_NEW_ELEMENT_DURATION } from "@/timeline/creation";
 import { mediaTimeFromSeconds, type MediaTime } from "@/wasm";
 import { useEditor } from "@/editor/use-editor";
 import { useFileUpload } from "@/media/use-file-upload";
-import { MEDIA_FILE_ACCEPT } from "@/wasm/file-types";
+
 import { invokeAction } from "@/actions";
-import { processMediaAssets } from "@/media/processing";
+import { processMediaPaths } from "@/media/processing";
 import { showMediaUploadToast } from "@/media/upload-toast";
 import {
 	SelectableItem,
@@ -49,12 +51,16 @@ import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { cn } from "@/utils/ui";
 import {
+	ArrowDownNarrowWideIcon,
 	ArrowUpDownIcon,
+	ArrowUpNarrowWideIcon,
+	CheckIcon,
 	ImageIcon,
 	LayoutGridIcon,
 	ListIcon,
 	type LucideIcon,
 	MusicIcon,
+	UnlinkIcon,
 	UploadIcon,
 	VideoIcon,
 } from "lucide-react";
@@ -77,8 +83,8 @@ export function MediaView() {
 	const [isProcessing, setIsProcessing] = useState(false);
 	const [progress, setProgress] = useState(0);
 
-	const processFiles = async ({ files }: { files: File[] }) => {
-		if (!files || files.length === 0) return;
+	const processPaths = async ({ paths }: { paths: string[] }) => {
+		if (paths.length === 0) return;
 		if (!activeProject) {
 			toast.error("No active project");
 			return;
@@ -88,10 +94,10 @@ export function MediaView() {
 		setProgress(0);
 		try {
 			await showMediaUploadToast({
-				filesCount: files.length,
+				filesCount: paths.length,
 				promise: async () => {
-					const processedAssets = await processMediaAssets({
-						files,
+					const processedAssets = await processMediaPaths({
+						paths,
 						onProgress: (progress: { progress: number }) =>
 							setProgress(progress.progress),
 					});
@@ -108,19 +114,16 @@ export function MediaView() {
 				},
 			});
 		} catch (error) {
-			console.error("Error processing files:", error);
+			console.error("Error importing media:", error);
 		} finally {
 			setIsProcessing(false);
 			setProgress(0);
 		}
 	};
 
-	const { isDragOver, dragProps, openFilePicker, fileInputProps } =
-		useFileUpload({
-			accept: MEDIA_FILE_ACCEPT,
-			multiple: true,
-			onFilesSelected: (files) => processFiles({ files }),
-		});
+	const { isDragOver, openFilePicker, dropRef } = useFileUpload({
+		onPathsSelected: ({ paths }) => processPaths({ paths }),
+	});
 
 	const handleRemove = ({
 		event,
@@ -137,16 +140,15 @@ export function MediaView() {
 		});
 	};
 
-	const handleSort = ({ key }: { key: MediaSortKey }) => {
-		if (mediaSortBy === key) {
-			setMediaSort({
-				key,
-				order: mediaSortOrder === "asc" ? "desc" : "asc",
-			});
-		} else {
-			setMediaSort({ key, order: "asc" });
-		}
-	};
+	// The key and the direction are set independently. Re-clicking the active key
+	// used to reverse the order, which meant the only way to reach "Name,
+	// descending" was to notice that clicking a checked item did something
+	// different from clicking an unchecked one.
+	const handleSortKey = ({ key }: { key: MediaSortKey }) =>
+		setMediaSort({ key, order: mediaSortOrder });
+
+	const handleSortOrder = ({ order }: { order: MediaSortOrder }) =>
+		setMediaSort({ key: mediaSortBy, order });
 
 	const filteredMediaItems = useMemo(() => {
 		const filtered = mediaFiles.filter((item) => !item.ephemeral);
@@ -188,9 +190,7 @@ export function MediaView() {
 	}, [filteredMediaItems]);
 
 	return (
-		<>
-			<input {...fileInputProps} />
-
+		<div ref={dropRef} className="h-full">
 			<PanelView
 				title="Assets"
 				actions={
@@ -200,13 +200,13 @@ export function MediaView() {
 						isProcessing={isProcessing}
 						sortBy={mediaSortBy}
 						sortOrder={mediaSortOrder}
-						onSort={handleSort}
+						onSortKey={handleSortKey}
+						onSortOrder={handleSortOrder}
 						onImport={openFilePicker}
 					/>
 				}
 				className={cn(isDragOver && "bg-accent/30")}
 				contentClassName="h-full"
-				{...dragProps}
 			>
 				{isDragOver || filteredMediaItems.length === 0 ? (
 					<MediaDragOverlay
@@ -231,7 +231,7 @@ export function MediaView() {
 					</SelectableSurface>
 				)}
 			</PanelView>
-		</>
+		</div>
 	);
 }
 
@@ -243,11 +243,13 @@ function MediaScopeRegistrar() {
 function MediaAssetDraggable({
 	item,
 	preview,
+	trailing,
 	variant,
 	isRounded,
 }: {
 	item: MediaAsset;
 	preview: React.ReactNode;
+	trailing?: React.ReactNode;
 	variant: "card" | "compact";
 	isRounded?: boolean;
 }) {
@@ -295,6 +297,7 @@ function MediaAssetDraggable({
 				addElementAtTime({ asset: item, startTime: currentTime })
 			}
 			variant={variant}
+			trailing={trailing}
 			isRounded={isRounded}
 		/>
 	);
@@ -315,16 +318,36 @@ function MediaItemWithContextMenu({
 		ids: string[];
 	}) => void;
 }) {
+	const editor = useEditor();
+	const activeProject = useEditor((e) => e.project.getActive());
 	const { isSelected, selectedIds } = useSelection();
 	const idsToDelete = isSelected(item.id) ? selectedIds : [item.id];
 	const deleteLabel =
 		idsToDelete.length > 1 ? `Delete ${idsToDelete.length} items` : "Delete";
+
+	// Offered for anything referenced, not only what is currently offline: a
+	// file that has been re-rendered in place is still found, and pointing the
+	// asset at its replacement is the same operation.
+	const canRelink = Boolean(item.sourcePath);
 
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
 			<ContextMenuContent>
 				<ContextMenuItem>Export clips</ContextMenuItem>
+				{canRelink ? (
+					<ContextMenuItem
+						onClick={() => {
+							if (!activeProject) return;
+							void editor.media.promptRelinkMediaAsset({
+								projectId: activeProject.metadata.id,
+								id: item.id,
+							});
+						}}
+					>
+						{item.missing ? "Relink media…" : "Relink to another file…"}
+					</ContextMenuItem>
+				) : null}
 				<ContextMenuItem
 					variant="destructive"
 					onClick={(event: React.MouseEvent<HTMLDivElement>) =>
@@ -357,7 +380,7 @@ function MediaItemList({
 
 	return (
 		<div
-			className={cn(isGrid ? "grid gap-4" : "flex flex-col gap-1.5")}
+			className={cn(isGrid ? "grid gap-4" : "flex flex-col gap-0.5")}
 			style={
 				isGrid ? { gridTemplateColumns: "repeat(auto-fill, 7rem)" } : undefined
 			}
@@ -372,6 +395,14 @@ function MediaItemList({
 									item={item}
 									variant={isGrid ? "grid" : "compact"}
 								/>
+							}
+							// A list row is 24px tall, so the duration goes at the end of
+							// the row rather than inside the thumbnail, where "Audio 5:20"
+							// was being asked to fit into a square the size of its own icon.
+							trailing={
+								!isGrid && item.duration
+									? formatDuration({ duration: item.duration })
+									: undefined
 							}
 							variant={isGrid ? "card" : "compact"}
 							isRounded={isGrid ? false : undefined}
@@ -399,42 +430,73 @@ function MediaDurationBadge({ duration }: { duration?: number }) {
 	);
 }
 
-function MediaDurationLabel({ duration }: { duration?: number }) {
-	if (!duration) return null;
-
-	return (
-		<span className="text-xs opacity-70">{formatDuration({ duration })}</span>
-	);
-}
-
+/**
+ * Stands in for an asset with no picture of its own — audio always, video and
+ * stills until their thumbnail has been made.
+ *
+ * The compact tile is 24px square, which is an icon and nothing else. It used to
+ * carry the type word and the duration as well, both of which overflowed it; the
+ * row already names the file and now carries the duration at its far end.
+ */
 function MediaTypePlaceholder({
 	icon: Icon,
 	label,
-	duration,
 	variant,
 }: {
 	icon: LucideIcon;
 	label: string;
-	duration?: number;
-	variant: "muted" | "bordered";
+	variant: "grid" | "compact";
 }) {
-	const iconClassName = cn("size-6", variant === "bordered" && "mb-1");
+	if (variant === "compact") {
+		return (
+			<div className="bg-muted/40 text-muted-foreground flex size-full items-center justify-center">
+				<Icon className="size-3.5" aria-label={label} />
+			</div>
+		);
+	}
 
 	return (
-		<div
-			className={cn(
-				"text-muted-foreground flex size-full flex-col items-center justify-center rounded",
-				variant === "muted" ? "bg-muted/30" : "border",
-			)}
-		>
-			<Icon className={iconClassName} />
+		<div className="bg-muted/30 text-muted-foreground flex size-full flex-col items-center justify-center gap-1 rounded">
+			<Icon className="size-6" />
 			<span className="text-xs">{label}</span>
-			<MediaDurationLabel duration={duration} />
+		</div>
+	);
+}
+
+/**
+ * Marks an asset whose file wasn't where the project left it.
+ *
+ * Everything under it is what was recorded at import — the thumbnail, the
+ * duration — so the tile still reads as the footage it stands for. The point
+ * is to say that the pixels are gone, not that the clip is.
+ */
+function MediaOfflineBadge() {
+	return (
+		<div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-background/70 text-center backdrop-blur-[1px]">
+			<UnlinkIcon className="size-4 text-muted-foreground" />
+			<span className="px-1 text-[10px] leading-tight text-muted-foreground">
+				Offline
+			</span>
 		</div>
 	);
 }
 
 function MediaPreview({
+	item,
+	variant = "grid",
+}: {
+	item: MediaAsset;
+	variant?: "grid" | "compact";
+}) {
+	return (
+		<div className="relative size-full">
+			<MediaPreviewContent item={item} variant={variant} />
+			{item.missing ? <MediaOfflineBadge /> : null}
+		</div>
+	);
+}
+
+function MediaPreviewContent({
 	item,
 	variant = "grid",
 }: {
@@ -447,7 +509,7 @@ function MediaPreview({
 		return (
 			<div className="relative flex size-full items-center justify-center bg-muted">
 				<Image
-					src={item.url ?? ""}
+					src={item.url ?? item.thumbnailUrl ?? ""}
 					alt={item.name}
 					fill
 					sizes="100vw"
@@ -484,31 +546,38 @@ function MediaPreview({
 			);
 		}
 
-		return (
-			<MediaTypePlaceholder
-				icon={VideoIcon}
-				label="Video"
-				duration={item.duration}
-				variant="muted"
-			/>
-		);
+		return <MediaTypePlaceholder icon={VideoIcon} label="Video" variant={variant} />;
 	}
 
 	if (item.type === "audio") {
 		return (
-			<MediaTypePlaceholder
-				icon={MusicIcon}
-				label="Audio"
-				duration={item.duration}
-				variant="bordered"
-			/>
+			<div className="relative size-full">
+				<MediaTypePlaceholder icon={MusicIcon} label="Audio" variant={variant} />
+				{shouldShowDurationBadge ? (
+					<MediaDurationBadge duration={item.duration} />
+				) : null}
+			</div>
 		);
 	}
 
-	return (
-		<MediaTypePlaceholder icon={ImageIcon} label="Unknown" variant="muted" />
-	);
+	return <MediaTypePlaceholder icon={ImageIcon} label="File" variant={variant} />;
 }
+
+const SORT_KEYS: ReadonlyArray<{ key: MediaSortKey; label: string }> = [
+	{ key: "name", label: "Name" },
+	{ key: "type", label: "Type" },
+	{ key: "duration", label: "Duration" },
+	{ key: "size", label: "File size" },
+];
+
+const SORT_ORDERS: ReadonlyArray<{
+	order: MediaSortOrder;
+	label: string;
+	icon: LucideIcon;
+}> = [
+	{ order: "asc", label: "Ascending", icon: ArrowUpNarrowWideIcon },
+	{ order: "desc", label: "Descending", icon: ArrowDownNarrowWideIcon },
+];
 
 function MediaActions({
 	mediaViewMode,
@@ -516,7 +585,8 @@ function MediaActions({
 	isProcessing,
 	sortBy,
 	sortOrder,
-	onSort,
+	onSortKey,
+	onSortOrder,
 	onImport,
 }: {
 	mediaViewMode: MediaViewMode;
@@ -524,11 +594,12 @@ function MediaActions({
 	isProcessing: boolean;
 	sortBy: MediaSortKey;
 	sortOrder: MediaSortOrder;
-	onSort: ({ key }: { key: MediaSortKey }) => void;
+	onSortKey: ({ key }: { key: MediaSortKey }) => void;
+	onSortOrder: ({ order }: { order: MediaSortOrder }) => void;
 	onImport: () => void;
 }) {
 	return (
-		<div className="flex gap-1.5">
+		<div className="flex items-center gap-1">
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<Button
@@ -538,7 +609,6 @@ function MediaActions({
 							setMediaViewMode(mediaViewMode === "grid" ? "list" : "grid")
 						}
 						disabled={isProcessing}
-						className="items-center justify-center"
 					>
 						{mediaViewMode === "grid" ? <ListIcon /> : <LayoutGridIcon />}
 					</Button>
@@ -549,61 +619,56 @@ function MediaActions({
 						: "Switch to grid view"}
 				</TooltipContent>
 			</Tooltip>
+			{/*
+			 * Both halves of the sort are on the menu, each ticked where it stands,
+			 * so what is in force is readable without opening anything twice and
+			 * changeable in one click either way. The tooltip no longer has to
+			 * narrate the state, and no click means something different from the
+			 * click above it.
+			 */}
 			<Tooltip>
 				<DropdownMenu>
 					<TooltipTrigger asChild>
 						<DropdownMenuTrigger asChild>
-							<Button
-								size="icon"
-								variant="ghost"
-								disabled={isProcessing}
-								className="items-center justify-center"
-							>
+							<Button size="icon" variant="ghost" disabled={isProcessing}>
 								<ArrowUpDownIcon />
 							</Button>
 						</DropdownMenuTrigger>
 					</TooltipTrigger>
-					<DropdownMenuContent align="end">
-						<SortMenuItem
-							label="Name"
-							sortKey="name"
-							currentSortBy={sortBy}
-							currentSortOrder={sortOrder}
-							onSort={onSort}
-						/>
-						<SortMenuItem
-							label="Type"
-							sortKey="type"
-							currentSortBy={sortBy}
-							currentSortOrder={sortOrder}
-							onSort={onSort}
-						/>
-						<SortMenuItem
-							label="Duration"
-							sortKey="duration"
-							currentSortBy={sortBy}
-							currentSortOrder={sortOrder}
-							onSort={onSort}
-						/>
-						<SortMenuItem
-							label="File size"
-							sortKey="size"
-							currentSortBy={sortBy}
-							currentSortOrder={sortOrder}
-							onSort={onSort}
-						/>
+					<DropdownMenuContent align="end" className="min-w-40">
+						<DropdownMenuLabel>Sort by</DropdownMenuLabel>
+						{SORT_KEYS.map(({ key, label }) => (
+							<SortMenuItem
+								key={key}
+								label={label}
+								isActive={sortBy === key}
+								onSelect={() => onSortKey({ key })}
+							/>
+						))}
+						<DropdownMenuSeparator />
+						<DropdownMenuLabel>Order</DropdownMenuLabel>
+						{SORT_ORDERS.map(({ order, label, icon: Icon }) => (
+							<SortMenuItem
+								key={order}
+								label={label}
+								leading={<Icon className="text-muted-foreground" />}
+								isActive={sortOrder === order}
+								onSelect={() => onSortOrder({ order })}
+							/>
+						))}
 					</DropdownMenuContent>
 				</DropdownMenu>
-				<TooltipContent>
-					Sort by {sortBy} ({sortOrder === "asc" ? "ascending" : "descending"})
-				</TooltipContent>
+				<TooltipContent>Sort</TooltipContent>
 			</Tooltip>
+			{/* Wears the zoom select's chrome — `bg-accent` inside `border-border` —
+			    rather than a ground of its own. `size="sm"` is the same 28px tall on
+			    the same 10px gutters, so the two read as one kind of control. */}
 			<Button
 				variant="outline"
 				onClick={onImport}
 				disabled={isProcessing}
 				size="sm"
-				className="items-center justify-center gap-1.5"
+				className="bg-accent hover:bg-foreground/10 gap-1.5"
 			>
 				<UploadIcon />
 				Import
@@ -612,25 +677,27 @@ function MediaActions({
 	);
 }
 
+/**
+ * A menu row that reports whether it is the one in force. The tick keeps its
+ * space when it is not, so the labels do not shuffle sideways as the choice
+ * moves down the list.
+ */
 function SortMenuItem({
 	label,
-	sortKey,
-	currentSortBy,
-	currentSortOrder,
-	onSort,
+	leading,
+	isActive,
+	onSelect,
 }: {
 	label: string;
-	sortKey: MediaSortKey;
-	currentSortBy: MediaSortKey;
-	currentSortOrder: MediaSortOrder;
-	onSort: ({ key }: { key: MediaSortKey }) => void;
+	leading?: React.ReactNode;
+	isActive: boolean;
+	onSelect: () => void;
 }) {
-	const isActive = currentSortBy === sortKey;
-	const arrow = isActive ? (currentSortOrder === "asc" ? "↑" : "↓") : "";
-
 	return (
-		<DropdownMenuItem onClick={() => onSort({ key: sortKey })}>
-			{label} {arrow}
+		<DropdownMenuItem onClick={onSelect}>
+			<CheckIcon className={cn(!isActive && "opacity-0")} />
+			{leading}
+			<span className="flex-1">{label}</span>
 		</DropdownMenuItem>
 	);
 }

@@ -61,7 +61,7 @@ import { useElementSelection } from "@/timeline/hooks/element/use-element-select
 import { resolveStickerId } from "@/stickers";
 import { buildGraphicPreviewUrl } from "@/graphics";
 import Image from "next/image";
-import { ArrowRightLeftIcon, CopyIcon, DiamondIcon, EyeIcon, EyeOffIcon, ScissorsIcon, SearchIcon, SnowflakeIcon, Trash2Icon, Volume2Icon, VolumeOffIcon, VolumeXIcon, WandSparklesIcon } from "lucide-react";
+import { ArrowRightLeftIcon, CopyIcon, DiamondIcon, EyeIcon, EyeOffIcon, ScissorsIcon, SearchIcon, SnowflakeIcon, Trash2Icon, UnlinkIcon, Volume2Icon, VolumeOffIcon, VolumeXIcon, WandSparklesIcon } from "lucide-react";
 import { uppercase } from "@/utils/string";
 import {
 	useCallback,
@@ -1032,8 +1032,9 @@ function AudioElementContent({
 
 	const audioUrl =
 		element.sourceType === "library" ? element.sourceUrl : mediaAsset?.url;
-	// Only present in the browser build. On desktop the asset has no `File` and
-	// the waveform is decoded from `audioUrl` instead, which streams off disk.
+	// Only present until the app is restarted: an asset reloaded from the media
+	// store has no `File`, and its waveform is decoded from `audioUrl` instead,
+	// which streams off disk.
 	const sourceFile =
 		element.sourceType === "upload" ? mediaAsset?.file : undefined;
 	const sourceKey =
@@ -1052,7 +1053,11 @@ function AudioElementContent({
 	if (audioUrl || sourceFile) {
 		return (
 			<div className="group/audio relative size-full">
-				<MediaElementHeader name={mediaLabel} hasFade={false} />
+				<MediaElementHeader
+					name={mediaLabel}
+					leading={mediaAsset?.missing ? <OfflineMediaMarker /> : null}
+					hasFade={false}
+				/>
 				<div className="absolute inset-x-0 top-5 bottom-0 overflow-hidden">
 					<AudioWaveform
 						sourceKey={sourceKey}
@@ -1130,7 +1135,8 @@ function TiledMediaContent({
 
 	if (!imageUrl) {
 		return (
-			<span className="text-foreground/80 truncate text-xs">
+			<span className="text-foreground/80 flex items-center gap-1 truncate text-xs">
+				{mediaAsset?.missing && <OfflineMediaMarker />}
 				{element.name}
 			</span>
 		);
@@ -1152,8 +1158,9 @@ function TiledMediaContent({
 			<MediaElementHeader
 				name={mediaAsset?.name}
 				leading={
-					isFrozen || hasEffects ? (
+					isFrozen || hasEffects || mediaAsset?.missing ? (
 						<div className="flex items-center gap-1">
+							{mediaAsset?.missing && <OfflineMediaMarker />}
 							{isFrozen && (
 								<SnowflakeIcon className="size-3 shrink-0 text-white/75" />
 							)}
@@ -1195,6 +1202,20 @@ function TiledFilmstrip({
 	const scrollParentRef = useRef<HTMLElement | null>(null);
 	const frameRef = useRef<number | null>(null);
 
+	// Hands the clip back to the stylesheet: `inset-x-0` with no width fills the
+	// whole element. This is where the strip starts and what every measurement
+	// that cannot be trusted falls back to. Overdraw is the cost this component
+	// already accepts to stay correct; a strip narrowed to nothing is not, since
+	// what shows through is the bare gray container.
+	const fillWholeClip = useCallback(() => {
+		const strip = stripRef.current;
+		if (!strip) return;
+		strip.style.left = "";
+		strip.style.right = "";
+		strip.style.width = "";
+		strip.style.backgroundPosition = "left center";
+	}, []);
+
 	const applySlice = useCallback(() => {
 		const container = containerRef.current;
 		const strip = stripRef.current;
@@ -1202,7 +1223,7 @@ function TiledFilmstrip({
 
 		const rect = container.getBoundingClientRect();
 		if (rect.width <= 0) {
-			strip.style.width = "0px";
+			fillWholeClip();
 			return;
 		}
 
@@ -1214,17 +1235,37 @@ function TiledFilmstrip({
 		const viewport = scrollParent?.getBoundingClientRect();
 		const viewportLeft = viewport?.left ?? 0;
 		const viewportRight = viewport?.right ?? window.innerWidth;
-
-		// Paint a viewport-width margin on each side. The slice is imperative
-		// geometry, so anything that moves the clip without raising scroll or
-		// resize — a neighbour re-laying out, a restored scroll position, a zoom
-		// that repositions this clip without changing its width — leaves it
-		// stale. With no margin a stale slice is bare gray container, which only
-		// a scroll would clear; with one it degrades to harmless overdraw. The
-		// painted area stays bounded at ~3 viewports instead of the clip's full
-		// width, which is the whole point of slicing.
 		const viewportWidth = Math.max(0, viewportRight - viewportLeft);
-		const overscan = viewportWidth;
+
+		// A viewport that measures as nothing is a layout that has not happened
+		// yet, not a clip with nothing to show. Opening a project mounts the
+		// panels, the timeline and every clip in one commit, and a child's layout
+		// effect runs before the ancestor layout effect that gives the panels
+		// their size — so this first measurement can read a scroll parent that is
+		// still zero-wide. Slicing against it puts the strip nowhere, and nothing
+		// afterwards is guaranteed to measure again: the recovery paths all wait
+		// on a *change* — a re-render, a scroll, a resize — and a layout that
+		// settled before anyone was watching raises none of them. That is the
+		// clip still gray a couple of seconds later, until some unrelated
+		// re-render happens by. Fill, and let the next measurement narrow it.
+		if (viewportWidth <= 0) {
+			fillWholeClip();
+			return;
+		}
+
+		// Paint a margin on each side. The slice is imperative geometry, so
+		// anything that moves the clip without raising scroll or resize — a
+		// neighbour re-laying out, a restored scroll position, a zoom that
+		// repositions this clip without changing its width — leaves it stale.
+		// With no margin a stale slice is bare gray container, which only a
+		// scroll would clear; with one it degrades to harmless overdraw.
+		//
+		// The margin is a window width rather than the measured viewport so that
+		// a viewport caught mid-layout — panels sized, but not yet the ones they
+		// settle on — can only ever make the slice too wide. The timeline is
+		// never wider than the window, so the painted area is still bounded at
+		// ~3 windows instead of the clip's full width, which is the point.
+		const overscan = Math.max(viewportWidth, window.innerWidth);
 		const paintBudget = viewportWidth + overscan * 2;
 
 		// Below that budget, slicing buys nothing — the slice would be the whole
@@ -1232,20 +1273,26 @@ function TiledFilmstrip({
 		// the strip stops depending on where the clip sits, which is the only
 		// way a missed scroll, resize or reflow cannot leave gray showing. Above
 		// it, slice as before; that is the case slicing exists for.
-		const isWithinPaintBudget = rect.width <= paintBudget;
-		const sliceLeft = isWithinPaintBudget
-			? 0
-			: Math.max(0, viewportLeft - overscan - rect.left);
-		const sliceRight = isWithinPaintBudget
-			? rect.width
-			: Math.min(rect.width, viewportRight + overscan - rect.left);
+		if (rect.width <= paintBudget) {
+			fillWholeClip();
+			return;
+		}
+
+		const sliceLeft = Math.max(0, viewportLeft - overscan - rect.left);
+		const sliceRight = Math.min(
+			rect.width,
+			viewportRight + overscan - rect.left,
+		);
 		const sliceWidth = Math.max(0, sliceRight - sliceLeft);
 
+		// `right` comes from `inset-x-0`, which is the fill case. Slicing drives
+		// the box off `left` and `width` instead, so it has to be released.
+		strip.style.right = "auto";
 		strip.style.left = `${sliceLeft}px`;
 		strip.style.width = `${sliceWidth}px`;
 		// Keep tiles phase-aligned with the clip's true origin.
 		strip.style.backgroundPosition = `${-(sliceLeft % tileWidth)}px center`;
-	}, [tileWidth]);
+	}, [fillWholeClip, tileWidth]);
 
 	const scheduleApply = useCallback(() => {
 		if (frameRef.current !== null) return;
@@ -1317,9 +1364,16 @@ function TiledFilmstrip({
 				pointerEvents: "none",
 			}}
 		>
+			{/*
+			 * `inset-x-0` is the filmstrip's resting state: with no width set it
+			 * covers the whole clip, so the strip paints before anything has
+			 * measured it and keeps painting through any measurement that comes
+			 * back untrustworthy. Slicing narrows it from there — never the other
+			 * way round, which would mean starting every clip as bare container.
+			 */}
 			<div
 				ref={stripRef}
-				className="absolute top-0 bottom-0"
+				className="absolute inset-x-0 top-0 bottom-0"
 				style={{
 					backgroundImage: `url(${imageUrl})`,
 					backgroundRepeat: "repeat-x",
@@ -1329,6 +1383,20 @@ function TiledFilmstrip({
 				}}
 			/>
 		</div>
+	);
+}
+
+/**
+ * Marks a clip whose media is offline. Sits in the header rather than over the
+ * clip so that a timeline of them still reads as a timeline — the cut points
+ * and durations are all still true, and only the pixels are missing.
+ */
+function OfflineMediaMarker() {
+	return (
+		<UnlinkIcon
+			className="size-3 shrink-0 text-amber-400"
+			aria-label="Media offline"
+		/>
 	);
 }
 

@@ -22,8 +22,11 @@ const buttonVariants = cva(
 					"border bg-background hover:bg-destructive/15 text-destructive",
 				caution: "text-caution hover:bg-caution/10",
 				outline: "border border-border bg-background hover:bg-accent",
+				// The lit state a toggle sits in. It still answers the pointer: with
+				// every neighbour now lighting up on hover, the one button already
+				// wearing a colour was the only one that went dead under it.
 				secondary:
-					"bg-secondary text-secondary-foreground border border-secondary-border",
+					"bg-secondary text-secondary-foreground border border-secondary-border hover:bg-secondary-border",
 				text: "bg-transparent rounded-none opacity-100 hover:opacity-75",
 				ghost: "bg-transparent hover:bg-accent",
 				link: "text-primary underline-offset-4 hover:underline !p-0 !h-auto",

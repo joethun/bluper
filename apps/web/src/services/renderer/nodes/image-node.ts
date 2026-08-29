@@ -73,6 +73,13 @@ export function loadImageSource({
 		await new Promise<void>((resolve, reject) => {
 			image.onload = () => resolve();
 			image.onerror = () => reject(new Error("Image load failed"));
+			// `asset:` URLs are a different origin from the page, so without
+			// this the image is treated as cross-origin: drawing it onto a
+			// canvas taints the canvas, the OffscreenCanvas that gets handed
+			// to `uploadTexture` is tainted, and the preview comes out
+			// transparent. The asset protocol already sends the matching
+			// `Access-Control-Allow-Origin`, so the request succeeds.
+			image.crossOrigin = "anonymous";
 			image.src = url;
 		});
 

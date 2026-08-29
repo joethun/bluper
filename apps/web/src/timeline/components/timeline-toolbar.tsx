@@ -297,7 +297,7 @@ function ToolbarRightSection({
 
 			<div className="flex items-center gap-1">
 				<Button
-					variant="text"
+					variant="ghost"
 					size="icon"
 					onClick={() => onZoom({ direction: "out" })}
 				>
@@ -314,7 +314,7 @@ function ToolbarRightSection({
 					step={0.005}
 				/>
 				<Button
-					variant="text"
+					variant="ghost"
 					size="icon"
 					onClick={() => onZoom({ direction: "in" })}
 				>
@@ -341,8 +341,11 @@ function ToolbarButton({
 	buttonWrapper?: (button: React.ReactElement) => React.ReactElement;
 }) {
 	const button = (
+		// `ghost` rather than `text`: fading the glyph out on hover read as the
+		// button dimming itself, and left no target edge to aim at. The lit panel
+		// is what the rest of the editor's icon buttons do.
 		<Button
-			variant={isActive ? "secondary" : "text"}
+			variant={isActive ? "secondary" : "ghost"}
 			size="icon"
 			disabled={disabled}
 			onClick={onClick ? (event) => onClick({ event }) : undefined}

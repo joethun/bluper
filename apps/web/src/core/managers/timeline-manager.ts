@@ -1,3 +1,4 @@
+import type { FrameRate } from "bluper-wasm";
 import type { EditorCore } from "@/core";
 import type { ElementBounds } from "@/preview/element-bounds";
 import type { ParamValues } from "@/params";
@@ -95,6 +96,11 @@ export class TimelineManager {
 	private totalDurationCache: {
 		scene: TScene;
 		duration: MediaTime;
+	} | null = null;
+	private lastFrameTimeCache: {
+		duration: MediaTime;
+		fps: FrameRate;
+		lastFrame: MediaTime;
 	} | null = null;
 	public readonly dragSource = new TimelineDragSource();
 
@@ -263,11 +269,33 @@ export class TimelineManager {
 		return duration;
 	}
 
+	/**
+	 * Memoized on the duration and frame rate it is derived from.
+	 *
+	 * `lastFrameMediaTime` crosses into wasm, and the preview's render loop
+	 * asks for this once per frame to clamp the playhead — so an unchanged
+	 * timeline was paying a boundary crossing sixty times a second to be told
+	 * the same tick. Both inputs are compared by value: `fps` is a fresh
+	 * object on some project reads, and a rate is two small integers.
+	 */
 	getLastFrameTime(): MediaTime {
 		const duration = this.getTotalDuration();
 		const fps = this.editor.project.getActive()?.settings.fps;
 		if (!fps || duration <= 0) return duration;
-		return lastFrameMediaTime({ duration, fps });
+
+		const cached = this.lastFrameTimeCache;
+		if (
+			cached &&
+			cached.duration === duration &&
+			cached.fps.numerator === fps.numerator &&
+			cached.fps.denominator === fps.denominator
+		) {
+			return cached.lastFrame;
+		}
+
+		const lastFrame = lastFrameMediaTime({ duration, fps });
+		this.lastFrameTimeCache = { duration, fps, lastFrame };
+		return lastFrame;
 	}
 
 	getTrackById({ trackId }: { trackId: string }): TimelineTrack | null {

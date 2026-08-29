@@ -36,7 +36,6 @@ pub const ANIMATION_PROPERTY_PATHS: &[&str] = &[
     "adjust.hue",
     "adjust.brightness",
     "adjust.contrast",
-    "adjust.highlight",
     "adjust.shadow",
     "adjust.sharpness",
     "adjust.vignette",

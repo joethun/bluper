@@ -14,6 +14,7 @@
 
 import {
 	TauriWriteStream,
+	tauriAllowMediaFile,
 	tauriAvailable,
 	tauriAvailableDiskBytes,
 	tauriConvertFileSrc,
@@ -55,6 +56,7 @@ import {
 } from "@/services/waveform-store/service";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import { getMediaTypeFromFile } from "@/wasm/file-types";
+import { processMediaPaths } from "@/media/processing";
 import type { MediaType } from "@/media/types";
 import {
 	getExportFormatSpec,
@@ -88,6 +90,7 @@ import {
 import { buildDefaultParamValues } from "@/params/registry";
 import { supportsCanvasFilter } from "@/effects/canvas-filter-support";
 import { readFullFrameRgba, readPixelRgba } from "@/services/renderer/canvas-utils";
+import { loadImageSource, clearImageSourceCache } from "@/services/renderer/nodes/image-node";
 
 /**
  * A 0.12s mono 8kHz FLAC — a 440Hz tone, metadata stripped to STREAMINFO. Small
@@ -680,6 +683,40 @@ async function writePatternFile({
 	return path;
 }
 
+/**
+ * Loads `url` into an HTMLImageElement and resolves with its decoded size, or
+ * rejects with the network-level error the element saw. The path the image
+ * import follows is exactly this — `new Image(); image.src = assetUrl` — so a
+ * failure here is the same failure the user sees as a "no decoder" toast.
+ */
+function loadImage({
+	url,
+	timeoutMs = 5000,
+}: {
+	url: string;
+	timeoutMs?: number;
+}): Promise<{ width: number; height: number }> {
+	return new Promise((resolve, reject) => {
+		const image = new Image();
+		const timer = setTimeout(() => {
+			image.remove();
+			reject(new Error(`<img> timed out after ${timeoutMs}ms loading ${url}`));
+		}, timeoutMs);
+		const cleanup = () => clearTimeout(timer);
+		image.addEventListener("load", () => {
+			cleanup();
+			image.remove();
+			resolve({ width: image.naturalWidth, height: image.naturalHeight });
+		});
+		image.addEventListener("error", () => {
+			cleanup();
+			image.remove();
+			reject(new Error(`<img> error loading ${url}`));
+		});
+		image.src = url;
+	});
+}
+
 const checks: Check[] = [
 	{
 		name: "Binary IPC writes bytes verbatim",
@@ -785,6 +822,150 @@ const checks: Check[] = [
 			} finally {
 				await tauriRemoveFile({ path });
 			}
+		},
+	},
+	{
+		name: "An imported image decodes through the asset protocol",
+		run: async () => {
+			// The image import path grants a single file through the asset
+			// protocol and loads it via <img>. PNG and JPEG are the formats the
+			// user reaches for first, so a failure here is the bug behind "no
+			// decoder" toasts on import.
+			const canvas = document.createElement("canvas");
+			canvas.width = 16;
+			canvas.height = 16;
+			const ctx = canvas.getContext("2d");
+			expect({
+				condition: ctx !== null,
+				message: "2D context unavailable",
+			});
+			ctx!.fillStyle = "rgb(255, 0, 0)";
+			ctx!.fillRect(0, 0, 8, 16);
+			ctx!.fillStyle = "rgb(0, 0, 255)";
+			ctx!.fillRect(8, 0, 8, 16);
+
+			// One PNG, one JPEG. Both are universal and both must decode —
+			// anything else is the bug the user is hitting.
+			const pngBlob = await new Promise<Blob | null>((resolve) =>
+				canvas.toBlob((value) => resolve(value), "image/png"),
+			);
+			const jpegBlob = await new Promise<Blob | null>((resolve) =>
+				canvas.toBlob((value) => resolve(value), "image/jpeg"),
+			);
+			expect({
+				condition: pngBlob !== null,
+				message: "canvas produced no PNG blob",
+			});
+			expect({
+				condition: jpegBlob !== null,
+				message: "canvas produced no JPEG blob",
+			});
+
+			for (const { format, blob } of [
+				{ format: "png" as const, blob: pngBlob! },
+				{ format: "jpeg" as const, blob: jpegBlob! },
+			]) {
+				const bytes = new Uint8Array(await blob.arrayBuffer());
+				const path = await tauriScratchPath({
+					name: `${crypto.randomUUID()}.${format}`,
+				});
+				try {
+					const stream = await TauriWriteStream.open({ path });
+					await stream.write({ bytes });
+					await stream.close();
+
+					const allowedPath = await tauriAllowMediaFile({ path });
+					const url = tauriConvertFileSrc(allowedPath);
+
+					const head = await fetch(url, {
+						headers: { Range: "bytes=0-15" },
+					});
+					expect({
+						condition: head.status === 206,
+						message: `${format} range request returned ${head.status}`,
+					});
+
+					const loaded = await loadImage({ url });
+					expect({
+						condition: loaded.width === 16 && loaded.height === 16,
+						message: `${format} decoded to ${loaded.width}x${loaded.height}, expected 16x16`,
+					});
+				} finally {
+					await tauriRemoveFile({ path }).catch(() => {});
+				}
+			}
+			return `PNG and JPEG both decoded to 16x16 via asset://`;
+		},
+	},
+	{
+		name: "processMediaPaths accepts PNG and JPEG by path",
+		run: async () => {
+			// The full import flow runs through processMediaPaths: dialog → stat
+			// → grant → load → thumbnail. A failure at any step surfaces to the
+			// user as a toast; the "no decoder" one was fired when the canvas
+			// draw after loading from `asset://` taints the canvas and
+			// toDataURL throws SecurityError.
+			const canvas = document.createElement("canvas");
+			canvas.width = 16;
+			canvas.height = 16;
+			const ctx = canvas.getContext("2d");
+			ctx!.fillStyle = "rgb(255, 0, 0)";
+			ctx!.fillRect(0, 0, 16, 16);
+
+			const pngBlob = await new Promise<Blob | null>((resolve) =>
+				canvas.toBlob((value) => resolve(value), "image/png"),
+			);
+			const jpegBlob = await new Promise<Blob | null>((resolve) =>
+				canvas.toBlob((value) => resolve(value), "image/jpeg"),
+			);
+			expect({
+				condition: pngBlob !== null,
+				message: "canvas produced no PNG blob",
+			});
+			expect({
+				condition: jpegBlob !== null,
+				message: "canvas produced no JPEG blob",
+			});
+
+			for (const { format, blob } of [
+				{ format: "png" as const, blob: pngBlob! },
+				{ format: "jpeg" as const, blob: jpegBlob! },
+			]) {
+				const bytes = new Uint8Array(await blob.arrayBuffer());
+				const path = await tauriScratchPath({
+					name: `${crypto.randomUUID()}.${format === "jpeg" ? "jpg" : "png"}`,
+				});
+				try {
+					const stream = await TauriWriteStream.open({ path });
+					await stream.write({ bytes });
+					await stream.close();
+
+					const assets = await processMediaPaths({ paths: [path] });
+					expect({
+						condition: assets.length === 1,
+						message: `${format} run returned ${assets.length} assets`,
+					});
+					expect({
+						condition: assets[0]?.type === "image",
+						message: `${format} asset type was ${assets[0]?.type as string}`,
+					});
+					expect({
+						condition:
+							assets[0]?.width === 16 && assets[0]?.height === 16,
+						message: `${format} geometry ${assets[0]?.width}x${assets[0]?.height}`,
+					});
+					expect({
+						condition:
+							assets[0]?.thumbnailUrl?.startsWith("data:image/jpeg") === true,
+						message: `${format} thumbnailUrl was ${
+							assets[0]?.thumbnailUrl?.slice(0, 40) ?? "missing"
+						}`,
+					});
+				} finally {
+					await tauriRemoveFile({ path }).catch(() => {});
+				}
+			}
+			return `processMediaPaths produced image assets for PNG and JPEG with thumbnails`;
 		},
 	},
 	{
@@ -4476,6 +4657,126 @@ const checks: Check[] = [
 				return `a foreign renderer's sync left this renderer's video texture intact (${after})`;
 			} finally {
 				wasmCompositor.syncTextures({ owner: mine, textures: [] });
+			}
+		},
+	},
+	{
+		// The asset-protocol → compositor path. A still image goes through
+		// `loadImageSource` (an `<img>` from `asset://…` wrapped in an
+		// OffscreenCanvas when downscaling) and lands as an external texture.
+		// If the `<img>` wasn't loaded with `crossOrigin = "anonymous"`, the
+		// OffscreenCanvas is tainted, the texture uploads as transparent, and
+		// the preview comes out blank.
+		name: "An imported image renders through the compositor",
+		run: async () => {
+			const SIZE = 16;
+			const CHECK_OWNER = "check";
+			await initializeGpuRenderer();
+			expect({
+				condition: isGpuAvailable(),
+				message: "the GPU renderer is unavailable, so nothing composites",
+			});
+			wasmCompositor.ensureInitialized({ width: SIZE, height: SIZE });
+			const canvas = wasmCompositor.getCanvas();
+
+			const drawCanvas = document.createElement("canvas");
+			drawCanvas.width = SIZE;
+			drawCanvas.height = SIZE;
+			const drawCtx = drawCanvas.getContext("2d");
+			expect({
+				condition: drawCtx !== null,
+				message: "2D context unavailable",
+			});
+			drawCtx!.fillStyle = "rgb(240, 0, 0)";
+			drawCtx!.fillRect(0, 0, SIZE, SIZE);
+			const blob = await new Promise<Blob | null>((resolve) =>
+				drawCanvas.toBlob((value) => resolve(value), "image/png"),
+			);
+			expect({
+				condition: blob !== null,
+				message: "canvas produced no PNG blob",
+			});
+			const bytes = new Uint8Array(await blob!.arrayBuffer());
+
+			const path = await tauriScratchPath({
+				name: `${crypto.randomUUID()}.png`,
+			});
+			try {
+				const stream = await TauriWriteStream.open({ path });
+				await stream.write({ bytes });
+				await stream.close();
+
+				const allowedPath = await tauriAllowMediaFile({ path });
+				const url = tauriConvertFileSrc(allowedPath);
+				const textureId = `${CHECK_OWNER}:image-render-${Date.now()}`;
+
+				clearImageSourceCache();
+				const source = await loadImageSource({ url });
+				try {
+					wasmCompositor.syncTextures({
+						owner: CHECK_OWNER,
+						textures: [
+							{
+								kind: "external",
+								id: textureId,
+								source: source.source,
+								width: source.width,
+								height: source.height,
+							},
+						],
+					});
+					wasmCompositor.render({
+						width: SIZE,
+						height: SIZE,
+						renderScale: 1,
+						clear: { color: [0, 0, 0, 1] },
+						items: [
+							{
+								type: "layer",
+								textureId,
+								transform: {
+									centerX: SIZE / 2,
+									centerY: SIZE / 2,
+									width: SIZE,
+									height: SIZE,
+									rotationDegrees: 0,
+									flipX: false,
+									flipY: false,
+								},
+								opacity: 1,
+								blendMode: "normal",
+								effectPassGroups: [],
+								mask: null,
+							},
+						],
+					});
+
+					const [red, green, blue, alpha] = readPixelRgba({
+						source: canvas,
+						width: SIZE,
+						height: SIZE,
+					});
+					expect({
+						condition: red > 200,
+						message: `red channel drew ${red}, expected > 200`,
+					});
+					expect({
+						condition: alpha > 200,
+						message: `alpha drew ${alpha}, expected > 200`,
+					});
+					expect({
+						condition: green < 20 && blue < 20,
+						message: `green/blue drew ${green}/${blue}, expected < 20`,
+					});
+					return `image uploaded and rendered as r=${red} g=${green} b=${blue} a=${alpha}`;
+				} finally {
+					wasmCompositor.syncTextures({
+						owner: CHECK_OWNER,
+						textures: [],
+					});
+				}
+			} finally {
+				await tauriRemoveFile({ path }).catch(() => {});
 			}
 		},
 	},

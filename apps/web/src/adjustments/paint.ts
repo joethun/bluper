@@ -230,13 +230,6 @@ function paintOverlay({
 		case "highPass":
 			paintHighPass({ ctx, overlay, source, width, height });
 			return;
-		case "toneCurve":
-			ctx.save();
-			ctx.globalCompositeOperation = overlay.compositeOperation;
-			ctx.globalAlpha = overlay.alpha;
-			ctx.drawImage(source, 0, 0, width, height);
-			ctx.restore();
-			return;
 	}
 }
 

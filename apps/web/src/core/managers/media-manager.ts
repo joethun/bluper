@@ -7,6 +7,10 @@ import { videoCache } from "@/services/video-cache/service";
 import { waveformCache } from "@/services/waveform-cache/service";
 import { clearImageSourceCache } from "@/services/renderer/nodes/image-node";
 import { BatchCommand, RemoveMediaAssetCommand } from "@/commands";
+import { processMediaPaths } from "@/media/processing";
+import { tauriOpenMediaFiles } from "@/lib/tauri-runtime";
+import { MEDIA_FILE_EXTENSIONS } from "@/wasm/file-types";
+import { buildWaveformSourceKey } from "@/media/waveform-summary";
 
 export class MediaManager {
 	private assets: MediaAsset[] = [];
@@ -46,13 +50,111 @@ export class MediaManager {
 			this.notify();
 
 			if (storageService.isQuotaExceededError({ error })) {
-				toast.error("Not enough browser storage", {
+				toast.error("Not enough disk space", {
 					description: error instanceof Error ? error.message : undefined,
 				});
 			}
 
 			return null;
 		}
+	}
+
+	/**
+	 * Points an offline asset at a file again.
+	 *
+	 * The new file is probed like any import, because it is not necessarily the
+	 * old one: a relink is how a proxy is swapped for a master, or a re-render
+	 * for the take it replaced, and the duration and dimensions that come back
+	 * are the ones the timeline should lay out against. What does *not* change
+	 * is the asset's id or its name — every clip on the timeline refers to the
+	 * id, and the name is what the user has been calling this footage.
+	 *
+	 * Kind is the one thing that has to match. Clips built for a video asset
+	 * read a frame at a time from it, and pointing them at an audio file would
+	 * leave a timeline full of elements that can no longer draw.
+	 */
+	async relinkMediaAsset({
+		projectId,
+		id,
+		path,
+	}: {
+		projectId: string;
+		id: string;
+		path: string;
+	}): Promise<MediaAsset | null> {
+		const existing = this.assets.find((asset) => asset.id === id);
+		if (!existing) return null;
+
+		// Reports its own reason if the file can't be read.
+		const [processed] = await processMediaPaths({ paths: [path] });
+		if (!processed) return null;
+
+		if (processed.type !== existing.type) {
+			toast.error(`Can't relink ${existing.name}`, {
+				description: `The clips using it expect ${existing.type}, and that file holds ${processed.type}.`,
+			});
+			return null;
+		}
+
+		const relinked: MediaAsset = {
+			...existing,
+			...processed,
+			id,
+			name: existing.name,
+			missing: false,
+		};
+
+		this.assets = this.assets.map((asset) =>
+			asset.id === id ? relinked : asset,
+		);
+		this.notify();
+
+		try {
+			await storageService.saveMediaAsset({ projectId, mediaAsset: relinked });
+		} catch (error) {
+			console.error("Failed to save relinked media asset:", error);
+			this.assets = this.assets.map((asset) =>
+				asset.id === id ? existing : asset,
+			);
+			this.notify();
+			toast.error(`Could not relink ${existing.name}`);
+			return null;
+		}
+
+		// Anything already decoded came from the file that went missing.
+		videoCache.clearVideo({ mediaId: id });
+		waveformCache.clearSource({
+			sourceKey: buildWaveformSourceKey({ kind: "media", id }),
+		});
+		clearImageSourceCache();
+
+		toast.success(`${existing.name} relinked`);
+		return relinked;
+	}
+
+	/**
+	 * Asks for a file and relinks to it. Separate from
+	 * {@link relinkMediaAsset} so the dialog stays out of anything that already
+	 * knows which path it wants.
+	 */
+	async promptRelinkMediaAsset({
+		projectId,
+		id,
+	}: {
+		projectId: string;
+		id: string;
+	}): Promise<MediaAsset | null> {
+		const asset = this.assets.find((item) => item.id === id);
+		if (!asset) return null;
+
+		const [path] = await tauriOpenMediaFiles({
+			title: `Relink ${asset.name}`,
+			extensions: MEDIA_FILE_EXTENSIONS,
+			multiple: false,
+		});
+		if (!path) return null;
+
+		return await this.relinkMediaAsset({ projectId, id, path });
 	}
 
 	removeMediaAsset({ projectId, id }: { projectId: string; id: string }): void {

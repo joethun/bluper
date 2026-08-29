@@ -2,9 +2,9 @@
 
 ## How to add a new effect
 
-1. Add the definition to the file for its family in `apps/web/src/effects/definitions/` — `motion.ts`, `tape.ts`, `optics.ts`, `keying.ts`. These are grouped by family, not one file per effect; only add a file if the effect starts a new family.
+1. Add the definition to the file for its family in `apps/web/src/effects/definitions/` — `motion.ts`, `tape.ts`, `optics.ts`, `keying.ts`. These are grouped by family, not one file per effect; only add a file if the effect starts a new family. (`shared.ts` holds param builders reused across families, and `blur.ts` re-exports the gaussian-blur helpers the project background uses — neither is a definition file.)
 2. Export an `EffectDefinition` — see `blurEffect` in `optics.ts` as a reference.
-3. Add it to a group in `apps/web/src/effects/definitions/index.ts`. Grouping and ordering are the same list, so an effect cannot be filed under one heading and sorted as though it were under another.
+3. Add it to a group in `apps/web/src/effects/definitions/index.ts`. Grouping and ordering are the same list, so an effect cannot be filed under one heading and sorted as though it were under another. The panel's headings are Motion, Looks, Optics and Keying — they don't map one-to-one onto the filenames, so put the definition in the file for its family and the group for its heading.
 
 An effect definition has:
 - `type` — unique string identifier

@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+#
+# Gives the locally built shell a real icon on Wayland.
+#
+# Wayland has no per-window icon. A client cannot hand the compositor a pixmap,
+# so `window.set_icon()` in src-tauri/src/lib.rs does nothing there — it only
+# lands under X11/XWayland. What the compositor uses instead is the toplevel's
+# app_id (GTK takes it from the binary name, so `bluper-desktop`): it looks for
+# `<app_id>.desktop` in the XDG data dirs and reads that entry's `Icon=`. The
+# .deb and .rpm install exactly that pair, which is why packaged builds look
+# right, while a bare `target/release/bluper-desktop` installs nothing and gets
+# the generic placeholder.
+#
+# This installs the same pair into ~/.local/share, pointed at the built binary.
+#
+#   script/install-desktop-entry
+#   script/install-desktop-entry --binary /path/to/bluper-desktop
+#   script/install-desktop-entry --uninstall
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Must equal the Wayland app_id, which GTK derives from the binary name — the
+# compositor matches entry basename to app_id and finds nothing otherwise.
+APP_ID="bluper-desktop"
+BINARY="$ROOT/target/release/bluper-desktop"
+UNINSTALL=""
+
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+DESKTOP_DIR="$DATA_HOME/applications"
+ICON_ROOT="$DATA_HOME/icons/hicolor"
+ICONS_SRC="$ROOT/apps/desktop/src-tauri/icons"
+
+# source PNG : hicolor size directory. 128x128@2x.png is a 256px image, so it
+# is installed as 256x256 rather than by its Tauri-side name.
+ICON_MAP="32x32.png:32x32
+128x128.png:128x128
+128x128@2x.png:256x256
+icon.png:512x512"
+
+usage() {
+	sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
+	exit "${1:-0}"
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--binary) BINARY="$2"; shift 2 ;;
+		--uninstall) UNINSTALL=1; shift ;;
+		-h|--help) usage 0 ;;
+		*) echo "unknown argument: $1" >&2; usage 1 ;;
+	esac
+done
+
+refresh_caches() {
+	if command -v update-desktop-database >/dev/null 2>&1; then
+		update-desktop-database "$DESKTOP_DIR" 2>/dev/null || true
+	fi
+	if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+		gtk-update-icon-cache -f -t "$ICON_ROOT" 2>/dev/null || true
+	fi
+}
+
+if [ -n "$UNINSTALL" ]; then
+	rm -f "$DESKTOP_DIR/$APP_ID.desktop"
+	while IFS=: read -r _ size; do
+		[ -n "$size" ] || continue
+		rm -f "$ICON_ROOT/$size/apps/$APP_ID.png"
+	done <<-EOF
+		$ICON_MAP
+	EOF
+	refresh_caches
+	echo "removed $APP_ID.desktop and its icons from $DATA_HOME"
+	exit 0
+fi
+
+[ -x "$BINARY" ] || {
+	echo "install-desktop-entry: no shell at $BINARY — build it first:" >&2
+	echo "    cd apps/desktop && bunx tauri build --no-bundle" >&2
+	exit 1
+}
+# Exec must be absolute: the entry is launched with an arbitrary working
+# directory, and a relative path would only resolve from the repo root.
+BINARY="$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")"
+
+while IFS=: read -r src size; do
+	[ -n "$size" ] || continue
+	[ -f "$ICONS_SRC/$src" ] || {
+		echo "install-desktop-entry: missing icon $ICONS_SRC/$src" >&2
+		exit 1
+	}
+	mkdir -p "$ICON_ROOT/$size/apps"
+	cp "$ICONS_SRC/$src" "$ICON_ROOT/$size/apps/$APP_ID.png"
+done <<-EOF
+	$ICON_MAP
+EOF
+
+# Only the Exec value takes desktop-entry quoting, and only when the path has
+# a space in it — quoting unconditionally would break the unquoted common case.
+case "$BINARY" in
+	*\ *) EXEC="\"$BINARY\"" ;;
+	*) EXEC="$BINARY" ;;
+esac
+
+mkdir -p "$DESKTOP_DIR"
+cat > "$DESKTOP_DIR/$APP_ID.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Bluper
+Comment=Privacy-first video editor
+Categories=AudioVideo;Video;
+Exec=$EXEC
+Icon=$APP_ID
+StartupWMClass=$APP_ID
+Terminal=false
+EOF
+
+refresh_caches
+
+echo "installed $DESKTOP_DIR/$APP_ID.desktop -> $BINARY"
+echo "icons in $ICON_ROOT/{32x32,128x128,256x256,512x512}/apps/$APP_ID.png"
+echo "restart the shell to pick up the icon; --uninstall removes both."

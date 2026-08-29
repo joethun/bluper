@@ -11,8 +11,9 @@
  *   requests against that URL, so `<video>` playback and Mediabunny's
  *   `UrlSource` pull only the bytes they need.
  *
- * This is why the desktop build has no storage quota: there is no origin
- * sandbox involved, just files on disk.
+ * There is no origin sandbox involved, just files on disk, so the only limit
+ * on an import is free space on the volume the app data folder lives on. See
+ * `storage/quota.ts`, which asks the OS rather than the WebView.
  */
 
 import {
@@ -22,6 +23,7 @@ import {
 	tauriListMedia,
 	tauriMediaPath,
 	tauriMediaSize,
+	tauriMoveFile,
 	tauriRemoveMedia,
 } from "@/lib/tauri-runtime";
 import type { MediaStore, StoredMedia } from "./types";
@@ -63,6 +65,16 @@ export class TauriMediaStore implements MediaStore {
 			await stream.abort().catch(() => {});
 			throw error;
 		}
+	}
+
+	async adopt({ key, from }: { key: string; from: string }): Promise<void> {
+		const path = await tauriMediaPath({
+			projectId: this.projectId,
+			mediaId: key,
+		});
+		// A rename within a filesystem, a copy across one. Either way the bytes
+		// are read from the page exactly once, when the probe wrote them.
+		await tauriMoveFile({ from, to: path });
 	}
 
 	async resolve({ key }: { key: string }): Promise<StoredMedia | null> {

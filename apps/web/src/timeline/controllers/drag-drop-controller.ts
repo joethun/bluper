@@ -1,5 +1,6 @@
 import type { DragEvent } from "react";
-import { processMediaAssets } from "@/media/processing";
+import { processMediaPaths } from "@/media/processing";
+import { registerNativeDropTarget } from "@/media/native-drop";
 import { showMediaUploadToast } from "@/media/upload-toast";
 import {
 	DEFAULT_NEW_ELEMENT_DURATION,
@@ -159,6 +160,7 @@ export class DragDropController {
 	private enterCount = 0;
 	private readonly subscribers = new Set<() => void>();
 	private readonly configRef: DragDropConfigRef;
+	private readonly unregisterNativeDrop: () => void;
 
 	constructor(deps: { configRef: DragDropConfigRef }) {
 		this.configRef = deps.configRef;
@@ -166,6 +168,38 @@ export class DragDropController {
 		this.onDragOver = this.onDragOver.bind(this);
 		this.onDragLeave = this.onDragLeave.bind(this);
 		this.onDrop = this.onDrop.bind(this);
+
+		// Files dropped from outside the app arrive from the shell rather than
+		// as a DOM event, because that is the only report of a drop that says
+		// where the files are. The handlers above still serve drags that began
+		// inside the window, which never leave the webview.
+		this.unregisterNativeDrop = registerNativeDropTarget({
+			element: () => this.config.getContainerEl(),
+			onOver: ({ isOver }) => {
+				// No drop target is computed while hovering: which track a file
+				// belongs on depends on whether it holds video or audio, and
+				// nothing knows that until it has been probed.
+				if (isOver) {
+					this.setOver({ dropTarget: null, elementType: null });
+				} else {
+					this.setIdle();
+				}
+			},
+			onPaths: ({ paths, clientX, clientY }) => {
+				const coords = this.getMouseTimelineCoords({
+					clientX,
+					clientY,
+				});
+				if (!coords) return;
+				this.executePathDrop({
+					paths,
+					mouseX: coords.mouseX,
+					mouseY: coords.mouseY,
+				}).catch((error) => {
+					console.error("Failed to process file drop:", error);
+				});
+			},
+		});
 	}
 
 	private get config(): DragDropConfig {
@@ -190,6 +224,7 @@ export class DragDropController {
 	}
 
 	destroy(): void {
+		this.unregisterNativeDrop();
 		this.subscribers.clear();
 	}
 
@@ -197,9 +232,7 @@ export class DragDropController {
 
 	onDragEnter(event: DragEvent): void {
 		event.preventDefault();
-		const hasAsset = this.config.dragSource.isActive();
-		const hasFiles = event.dataTransfer.types.includes("Files");
-		if (!hasAsset && !hasFiles) return;
+		if (!this.config.dragSource.isActive()) return;
 
 		this.enterCount += 1;
 		if (this.state.kind === "idle") {
@@ -210,19 +243,14 @@ export class DragDropController {
 	onDragOver(event: DragEvent): void {
 		event.preventDefault();
 
-		const coords = this.getMouseTimelineCoords({ event });
+		const coords = this.getMouseTimelineCoords({
+			clientX: event.clientX,
+			clientY: event.clientY,
+		});
 		if (!coords) return;
 
 		const dragData = this.config.dragSource.getActive();
-		const hasFiles = event.dataTransfer.types.includes("Files");
-		const isExternal = hasFiles && !dragData;
-
-		if (!dragData) {
-			if (hasFiles && isExternal) {
-				this.setOver({ dropTarget: null, elementType: null });
-			}
-			return;
-		}
+		if (!dragData) return;
 
 		if (dragData.type === "transition") {
 			const target = computeTransitionDropTarget({
@@ -251,7 +279,7 @@ export class DragDropController {
 			mouseY: coords.mouseY,
 			tracks: sceneTracks,
 			playheadTime: this.config.getCurrentPlayheadTime(),
-			isExternalDrop: isExternal,
+			isExternalDrop: false,
 			elementDuration: duration,
 			pixelsPerSecond: BASE_TIMELINE_PIXELS_PER_SECOND,
 			zoomLevel: this.config.zoomLevel,
@@ -281,28 +309,14 @@ export class DragDropController {
 		this.enterCount = 0;
 
 		const dragData = this.config.dragSource.getActive();
-		const hasFiles = event.dataTransfer.files?.length > 0;
-		if (!dragData && !hasFiles) return;
+		if (!dragData) return;
 
 		const currentTarget = this.dropTarget;
 		this.setIdle();
 
 		try {
-			if (dragData) {
-				if (!currentTarget) return;
-				this.executeAssetDrop({ target: currentTarget, dragData });
-				return;
-			}
-
-			const coords = this.getMouseTimelineCoords({ event });
-			if (!coords) return;
-			this.executeFileDrop({
-				files: Array.from(event.dataTransfer.files),
-				mouseX: coords.mouseX,
-				mouseY: coords.mouseY,
-			}).catch((error) => {
-				console.error("Failed to process file drop:", error);
-			});
+			if (!currentTarget) return;
+			this.executeAssetDrop({ target: currentTarget, dragData });
 		} catch (error) {
 			console.error("Failed to process drop:", error);
 		}
@@ -328,9 +342,11 @@ export class DragDropController {
 	}
 
 	private getMouseTimelineCoords({
-		event,
+		clientX,
+		clientY,
 	}: {
-		event: DragEvent;
+		clientX: number;
+		clientY: number;
 	}): TimelineCoords | null {
 		const scrollContainer = this.config.getTracksScrollEl();
 		const referenceRect =
@@ -344,8 +360,8 @@ export class DragDropController {
 			this.config.getHeaderEl()?.getBoundingClientRect().height ?? 0;
 
 		return {
-			mouseX: event.clientX - referenceRect.left + scrollLeft,
-			mouseY: event.clientY - referenceRect.top + scrollTop - headerHeight,
+			mouseX: clientX - referenceRect.left + scrollLeft,
+			mouseY: clientY - referenceRect.top + scrollTop - headerHeight,
 		};
 	}
 
@@ -571,12 +587,12 @@ export class DragDropController {
 		this.insertAtTarget({ element, target, trackType: "effect" });
 	}
 
-	private async executeFileDrop({
-		files,
+	private async executePathDrop({
+		paths,
 		mouseX,
 		mouseY,
 	}: {
-		files: File[];
+		paths: string[];
 		mouseX: number;
 		mouseY: number;
 	}): Promise<void> {
@@ -584,9 +600,9 @@ export class DragDropController {
 		if (!projectId) return;
 
 		await showMediaUploadToast({
-			filesCount: files.length,
+			filesCount: paths.length,
 			promise: async () => {
-				const processedAssets = await processMediaAssets({ files });
+				const processedAssets = await processMediaPaths({ paths });
 
 				// Sequential on purpose: each iteration reads getSceneTracks()
 				// to decide placement (reuse empty main vs new track) and that

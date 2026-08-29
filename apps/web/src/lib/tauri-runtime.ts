@@ -27,6 +27,16 @@ declare global {
 		__TAURI_INTERNALS__?: {
 			invoke: (cmd: string, args?: unknown, opts?: unknown) => Promise<unknown>;
 			convertFileSrc?: (path: string, protocol?: string) => string;
+			/**
+			 * Registers a function the Rust side can call back into, returning the
+			 * id it is reachable by. Injected by Tauri's own `core.js`; this is
+			 * the whole of what `@tauri-apps/api`'s event module is built on.
+			 */
+			transformCallback?: <T>(
+				callback: (message: T) => void,
+				once?: boolean,
+			) => number;
+			unregisterCallback?: (id: number) => void;
 		};
 	}
 }
@@ -138,6 +148,141 @@ export async function tauriSaveDialog(
  */
 export async function tauriRevealItemInDir(path: string): Promise<void> {
 	await invoke<void>("plugin:opener|reveal_item_in_dir", { paths: [path] });
+}
+
+/**
+ * Picks media files with the OS file dialog, returning real filesystem paths.
+ *
+ * This is the only import route that yields a path. An `<input type="file">`
+ * and an HTML drop both produce a `File` whose bytes the page can read but
+ * whose location it can never learn, which is what forces media arriving that
+ * way to be copied into the project before anything can decode it.
+ */
+export async function tauriOpenMediaFiles({
+	title,
+	extensions,
+	multiple = true,
+}: {
+	title?: string;
+	extensions: string[];
+	multiple?: boolean;
+}): Promise<string[]> {
+	const result = await invoke<string[] | string | null>("plugin:dialog|open", {
+		options: {
+			title,
+			multiple,
+			directory: false,
+			filters: [{ name: "Media", extensions }],
+		},
+	});
+
+	if (result === null) return [];
+	return Array.isArray(result) ? result : [result];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shell events                                                                */
+/* -------------------------------------------------------------------------- */
+
+/** Stops delivery of the events a {@link tauriListen} call subscribed to. */
+export type TauriUnlisten = () => void;
+
+/**
+ * Subscribes to an event emitted by the shell.
+ *
+ * The same three calls `@tauri-apps/api` makes — register a callback, hand its
+ * id to the event plugin, hand the returned id back to unsubscribe — written
+ * out here for the same reason as everything else in this file: the runtime
+ * surface is small, and a JS dependency for it would have to be kept in step
+ * with the Rust one.
+ */
+export async function tauriListen<T>({
+	event,
+	handler,
+}: {
+	event: string;
+	handler: (payload: T) => void;
+}): Promise<TauriUnlisten> {
+	const transform = window.__TAURI_INTERNALS__?.transformCallback;
+	if (typeof transform !== "function") {
+		throw new Error("Tauri event bridge is not available");
+	}
+
+	const callbackId = transform<{ payload: T }>((message) => {
+		handler(message.payload);
+	});
+
+	const eventId = await invoke<number>("plugin:event|listen", {
+		event,
+		target: { kind: "Any" },
+		handler: callbackId,
+	});
+
+	return () => {
+		void invoke("plugin:event|unlisten", { event, eventId }).catch(() => {});
+		window.__TAURI_INTERNALS__?.unregisterCallback?.(callbackId);
+	};
+}
+
+/**
+ * Files dragged onto the window, reported by the shell rather than by the DOM.
+ *
+ * This is the only drop that carries paths. `dragDropEnabled` in
+ * `tauri.conf.json` decides which of the two arrives: with it on, the webview
+ * never sees an HTML drop event, and these come instead.
+ */
+export type TauriDragDropPayload = {
+	paths: string[];
+	position: { x: number; y: number };
+};
+
+export const TAURI_DRAG_ENTER = "tauri://drag-enter";
+export const TAURI_DRAG_OVER = "tauri://drag-over";
+export const TAURI_DRAG_DROP = "tauri://drag-drop";
+export const TAURI_DRAG_LEAVE = "tauri://drag-leave";
+
+/* -------------------------------------------------------------------------- */
+/* Referenced media                                                            */
+/* -------------------------------------------------------------------------- */
+
+/** What a file on disk looks like right now. See `bluper_stat_file`. */
+export type NativeFileStat = {
+	path: string;
+	size: number;
+	/** Milliseconds since the Unix epoch, on the same scale as `File.lastModified`. */
+	lastModified: number;
+};
+
+/**
+ * Describes any file on disk, or null when there is no file there.
+ *
+ * Null is the answer a referenced asset gets when its file has been moved,
+ * renamed or unplugged, and it is what puts the asset into its offline state
+ * rather than an error.
+ */
+export async function tauriStatFile({
+	path,
+}: {
+	path: string;
+}): Promise<NativeFileStat | null> {
+	return await invoke<NativeFileStat | null>("bluper_stat_file", { path });
+}
+
+/**
+ * Grants the `asset:` protocol read access to one file outside the app's own
+ * folders, and returns the canonical path it was granted under.
+ *
+ * Referenced media lives wherever the user keeps it, and the protocol's
+ * configured scope covers only what the app writes itself. The grant lasts for
+ * the life of the process, so this runs again for every referenced asset each
+ * time a project loads.
+ */
+export async function tauriAllowMediaFile({
+	path,
+}: {
+	path: string;
+}): Promise<string> {
+	return await invoke<string>("bluper_allow_media_file", { path });
 }
 
 /* -------------------------------------------------------------------------- */

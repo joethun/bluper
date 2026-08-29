@@ -9,9 +9,13 @@ import {
 	SectionTitle,
 } from "@/components/section";
 import { Button } from "@/components/ui/button";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useEditor } from "@/editor/use-editor";
 import type { AdjustableElement } from "@/timeline";
-import { cn } from "@/utils/ui";
 import { CropIcon } from "lucide-react";
 import { CROP_PARAM_KEYS, NO_CROP, readCropFromParams, type CropInsets } from "@/crop";
 import { useCropModeStore } from "@/crop/crop-mode-store";
@@ -120,35 +124,44 @@ export function CropTab({
 
 	return (
 		<div className="flex h-full flex-col">
-			<PanelHeader title="Crop" />
-			<Section sectionKey={`${element.id}:crop-mode`}>
-				{/* `pt-4` is what a section with no header of its own uses — same as
-				    Fade, Speed, Audio and the shared params section. */}
-				<SectionContent className="flex flex-col gap-1.5 pt-4">
-					<Button
-						type="button"
-						size="sm"
-						variant={isCropping ? "secondary" : "outline"}
-						className="w-full"
-						onClick={() =>
-							toggleCropMode({ element: { trackId, elementId: element.id } })
-						}
-					>
-						<CropIcon />
-						{isCropping ? "Done cropping" : "Crop in preview"}
-					</Button>
-					<p className="text-muted-foreground text-xs">
-						Or double-click the clip in the preview. Drag the corners; the
-						trimmed edges stay visible so you can give them back.
-					</p>
-				</SectionContent>
-			</Section>
+			{/*
+			 * The handles toggle sits in the title bar, where every other panel keeps
+			 * the action that belongs to the panel as a whole. It used to be a
+			 * full-width button in a section of its own with a paragraph of
+			 * instructions under it — two things no other inspector tab has, so the
+			 * top of this one read as a different piece of software.
+			 */}
+			<PanelHeader title="Crop">
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<Button
+							type="button"
+							size="icon"
+							variant={isCropping ? "secondary" : "ghost"}
+							aria-pressed={isCropping}
+							aria-label={
+								isCropping ? "Done cropping" : "Crop in the preview"
+							}
+							onClick={() =>
+								toggleCropMode({ element: { trackId, elementId: element.id } })
+							}
+						>
+							<CropIcon />
+						</Button>
+					</TooltipTrigger>
+					<TooltipContent>
+						{isCropping
+							? "Done cropping"
+							: "Crop in the preview — or double-click the clip there"}
+					</TooltipContent>
+				</Tooltip>
+			</PanelHeader>
 			{canUsePresets && (
 				<Section sectionKey={`${element.id}:crop-presets`}>
 					<SectionHeader>
 						<SectionTitle className="flex-1">Aspect ratio</SectionTitle>
 					</SectionHeader>
-					<SectionContent className="flex flex-wrap gap-1">
+					<SectionContent className="flex flex-wrap gap-1.5">
 						{CROP_PRESETS.map((preset) => {
 							const next =
 								preset.ratio === null
@@ -173,8 +186,11 @@ export function CropTab({
 									key={preset.label}
 									type="button"
 									size="sm"
-									variant={isActive ? "secondary" : "ghost"}
-									className={cn("h-7 px-2 text-xs", !isActive && "opacity-75")}
+									// Outline rather than a dimmed ghost: these are one choice
+									// out of six, and an unpicked option still needs an edge to
+									// look clickable.
+									variant={isActive ? "secondary" : "outline"}
+									className="text-xs"
 									onClick={() => applyCrop({ next })}
 								>
 									{preset.label}

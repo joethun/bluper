@@ -804,22 +804,28 @@ function TimelineTrackRows({
 			: (null as ReadonlyMap<string, MediaTime> | null),
 		[dragView],
 	);
+	// The track holding what is being dragged goes last, so it paints over its
+	// neighbours for as long as the gesture lasts.
+	//
+	// Membership is worked out once per track rather than inside the
+	// comparator, which `sort` calls O(n log n) times and which was scanning
+	// both tracks' elements on each of them. It also makes the ordering
+	// well-defined: comparing two tracks that *both* held dragged elements used
+	// to answer `1` whichever way round it was asked, and a comparator that
+	// contradicts itself leaves the result up to the engine. `sort` is stable,
+	// so tracks that share a flag keep the order they came in.
 	const sortedTracks = useMemo(() => {
 		if (!draggingElementIds)
 			return tracks.map((track, index) => ({ track, index }));
-		return [...tracks]
-			.map((track, index) => ({ track, index }))
-			.sort((a, b) => {
-				const aHasDragged = a.track.elements.some((element) =>
+		return tracks
+			.map((track, index) => ({
+				track,
+				index,
+				hasDragged: track.elements.some((element) =>
 					draggingElementIds.has(element.id),
-				);
-				const bHasDragged = b.track.elements.some((element) =>
-					draggingElementIds.has(element.id),
-				);
-				if (aHasDragged) return 1;
-				if (bHasDragged) return -1;
-				return 0;
-			});
+				),
+			}))
+			.sort((a, b) => Number(a.hasDragged) - Number(b.hasDragged));
 	}, [tracks, draggingElementIds]);
 
 	return (

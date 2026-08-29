@@ -4,6 +4,11 @@ import type { MediaAsset } from "@/media/types";
 import { IndexedDBAdapter, deleteDatabase } from "./indexeddb-adapter";
 import { TauriMediaStore } from "./tauri-media-store";
 import {
+	tauriAllowMediaFile,
+	tauriConvertFileSrc,
+	tauriStatFile,
+} from "@/lib/tauri-runtime";
+import {
 	type StorageCapacityCheckResult,
 	StorageQuotaExceededError,
 	evaluateStorageCapacity,
@@ -101,9 +106,48 @@ function buildMediaAssetData({
 		width: mediaAsset.width,
 		height: mediaAsset.height,
 		duration: mediaAsset.duration,
+		fps: mediaAsset.fps,
+		hasAudio: mediaAsset.hasAudio,
 		thumbnailUrl: mediaAsset.thumbnailUrl,
 		ephemeral: mediaAsset.ephemeral,
+		sourcePath: mediaAsset.sourcePath,
 	};
+}
+
+/**
+ * Resolves a referenced asset against the file it points at.
+ *
+ * The file is the user's, so it may have moved, been renamed, or be on a drive
+ * that isn't mounted. That is reported as `missing` rather than as a failure:
+ * everything the project knows about the media — duration, dimensions, its
+ * thumbnail — was recorded at import and is still true, so the timeline lays
+ * out exactly as before and only the pixels are absent. That is what makes a
+ * relink a repair rather than a re-import.
+ */
+async function resolveReferencedMedia({
+	sourcePath,
+}: {
+	sourcePath: string;
+}): Promise<Pick<MediaAsset, "path" | "url" | "missing" | "size">> {
+	const stat = await tauriStatFile({ path: sourcePath }).catch(() => null);
+	if (!stat) return { missing: true };
+
+	// The asset-protocol grant lasts only as long as the process, so every load
+	// asks for it again.
+	try {
+		const allowedPath = await tauriAllowMediaFile({ path: sourcePath });
+		return {
+			path: allowedPath,
+			url: tauriConvertFileSrc(allowedPath),
+			size: stat.size,
+		};
+	} catch (error) {
+		console.warn(
+			`[storage] Could not grant access to ${sourcePath}:`,
+			error,
+		);
+		return { missing: true };
+	}
 }
 
 class StorageService {
@@ -345,6 +389,17 @@ class StorageService {
 		const { mediaMetadataAdapter, mediaAssetsAdapter } =
 			this.getProjectMediaAdapters({ projectId });
 
+		// Referenced media has no bytes here to write: the file is the user's and
+		// stays where it is. Only the metadata — which includes the path that
+		// finds it again — is ours to keep.
+		if (mediaAsset.sourcePath) {
+			await mediaMetadataAdapter.set({
+				key: mediaAsset.id,
+				value: buildMediaAssetData({ mediaAsset, file: mediaAsset.file }),
+			});
+			return;
+		}
+
 		const file = mediaAsset.file;
 		if (!file) {
 			// An asset loaded from disk has no `File`: its bytes are already
@@ -370,7 +425,16 @@ class StorageService {
 		const metadata: MediaAssetData = buildMediaAssetData({ mediaAsset, file });
 
 		try {
-			await mediaAssetsAdapter.put({ key: mediaAsset.id, file });
+			// The probe already wrote these bytes out to scratch, so move that
+			// file into place rather than streaming the same gigabytes again.
+			if (mediaAsset.stagedPath) {
+				await mediaAssetsAdapter.adopt({
+					key: mediaAsset.id,
+					from: mediaAsset.stagedPath,
+				});
+			} else {
+				await mediaAssetsAdapter.put({ key: mediaAsset.id, file });
+			}
 			await mediaMetadataAdapter.set({
 				key: mediaAsset.id,
 				value: metadata,
@@ -402,12 +466,8 @@ class StorageService {
 		const { mediaMetadataAdapter, mediaAssetsAdapter } =
 			this.getProjectMediaAdapters({ projectId });
 
-		const [stored, metadata] = await Promise.all([
-			mediaAssetsAdapter.resolve({ key: id }),
-			mediaMetadataAdapter.get(id),
-		]);
-
-		if (!stored || !metadata) return null;
+		const metadata = await mediaMetadataAdapter.get(id);
+		if (!metadata) return null;
 
 		const common = {
 			id: metadata.id,
@@ -416,11 +476,26 @@ class StorageService {
 			width: metadata.width,
 			height: metadata.height,
 			duration: metadata.duration,
+			fps: metadata.fps,
+			hasAudio: metadata.hasAudio,
 			thumbnailUrl: metadata.thumbnailUrl,
 			ephemeral: metadata.ephemeral,
 			size: metadata.size,
 			lastModified: metadata.lastModified,
 		};
+
+		if (metadata.sourcePath) {
+			return {
+				...common,
+				sourcePath: metadata.sourcePath,
+				...(await resolveReferencedMedia({
+					sourcePath: metadata.sourcePath,
+				})),
+			};
+		}
+
+		const stored = await mediaAssetsAdapter.resolve({ key: id });
+		if (!stored) return null;
 
 		return {
 			...common,
@@ -469,6 +544,15 @@ class StorageService {
 	}): Promise<void> {
 		const { mediaMetadataAdapter, mediaAssetsAdapter } =
 			this.getProjectMediaAdapters({ projectId });
+
+		// Removing a referenced asset removes the project's record of it and
+		// nothing else. The file belongs to the user, who did not ask for it to
+		// be deleted by dragging a clip out of a timeline.
+		const metadata = await mediaMetadataAdapter.get(id).catch(() => null);
+		if (metadata?.sourcePath) {
+			await mediaMetadataAdapter.remove(id);
+			return;
+		}
 
 		await Promise.all([
 			mediaAssetsAdapter.remove(id),

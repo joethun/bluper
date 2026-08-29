@@ -40,12 +40,19 @@ function getEmptyDragImage() {
 export interface DraggableItemProps {
 	name: string;
 	preview: ReactNode;
+	/** Right-hand slot on the `compact` row — the duration, for a media asset. */
+	trailing?: ReactNode;
 	dragData: TimelineDragData;
 	onDragStart?: ({ e }: { e: React.DragEvent }) => void;
 	onAddToTimeline?: ({ currentTime }: { currentTime: MediaTime }) => void;
 	aspectRatio?: number;
 	className?: string;
 	containerClassName?: string;
+	/**
+	 * Merged onto the `card` variant's thumbnail box, for a panel whose tiles are
+	 * cut differently from the asset grid's.
+	 */
+	previewClassName?: string;
 	shouldShowPlusOnDrag?: boolean;
 	shouldShowLabel?: boolean;
 	isRounded?: boolean;
@@ -56,12 +63,14 @@ export interface DraggableItemProps {
 export function DraggableItem({
 	name,
 	preview,
+	trailing,
 	dragData,
 	onDragStart,
 	onAddToTimeline,
 	aspectRatio = 16 / 9,
 	className = "",
 	containerClassName,
+	previewClassName,
 	shouldShowPlusOnDrag = true,
 	shouldShowLabel = true,
 	isRounded = true,
@@ -138,6 +147,7 @@ export function DraggableItem({
 								"bg-accent relative overflow-hidden ring-1 ring-transparent transition-shadow group-hover:ring-border",
 								isRounded && "rounded-sm",
 								isDraggable && "[&::-webkit-drag-ghost]:opacity-0",
+								previewClassName,
 							)}
 							draggable={isDraggable}
 							onDragStart={isDraggable ? handleDragStart : undefined}
@@ -168,10 +178,12 @@ export function DraggableItem({
 					ref={dragRef}
 					className={cn("group relative w-full", containerClassName)}
 				>
+					{/* The same lit-panel hover the icon buttons use, so a row in the
+					    list answers the pointer instead of sitting inert until clicked. */}
 					<button
 						type="button"
 						className={cn(
-							"flex h-8 w-full cursor-default items-center gap-3 px-1 outline-none",
+							"hover:bg-accent flex h-8 w-full cursor-default items-center gap-2.5 rounded-sm px-1.5 outline-none transition-colors duration-150",
 							isDraggable && "[&::-webkit-drag-ghost]:opacity-0",
 							className,
 						)}
@@ -182,9 +194,14 @@ export function DraggableItem({
 						<div className="size-6 shrink-0 overflow-hidden rounded-sm">
 							{preview}
 						</div>
-						<span className="w-full flex-1 truncate text-sm text-left">
+						<span className="min-w-0 flex-1 truncate text-left text-sm">
 							{name}
 						</span>
+						{trailing ? (
+							<span className="text-muted-foreground shrink-0 font-mono text-xs tabular-nums">
+								{trailing}
+							</span>
+						) : null}
 					</button>
 				</div>
 			)}
@@ -193,17 +210,24 @@ export function DraggableItem({
 				isDragging &&
 				typeof document !== "undefined" &&
 				createPortal(
+					// `panel` so the tokens below resolve against the panel palette: the
+					// ghost is portalled to <body>, outside the panel it was dragged out
+					// of, and `bg-background` there would be the app's darker ground.
 					<div
-						className="pointer-events-none fixed z-9999"
+						className="panel pointer-events-none fixed z-9999"
 						style={{
 							left: dragPosition.x - 40,
 							top: dragPosition.y - 40,
 						}}
 					>
 						<div className="w-[80px]">
+							{/* An opaque ground of its own. Previews that are placeholders
+							    rather than images — audio especially — painted nothing but
+							    their icon, so the ghost dragged as a transparent square with
+							    the timeline showing straight through it. */}
 							<AspectRatio
 								ratio={1}
-								className="ring-primary relative overflow-hidden rounded-md shadow-2xl ring-3"
+								className="bg-background ring-primary relative overflow-hidden rounded-md shadow-2xl ring-3"
 							>
 								<div className="size-full [&_img]:size-full [&_img]:rounded-none [&_img]:object-cover">
 									{preview}

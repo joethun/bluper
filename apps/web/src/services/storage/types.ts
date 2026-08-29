@@ -39,6 +39,12 @@ export type StoredMedia = {
 export interface MediaStore {
 	/** Writes a file, replacing anything already stored under `key`. */
 	put(args: { key: string; file: File }): Promise<void>;
+	/**
+	 * Takes over a file already on disk, moving it under `key`. Used for media
+	 * the probe had to write out anyway, so its bytes cross the disk once
+	 * instead of twice; `from` no longer exists afterwards.
+	 */
+	adopt(args: { key: string; from: string }): Promise<void>;
 	/** Describes the stored file, or null when there isn't one. */
 	resolve(args: { key: string }): Promise<StoredMedia | null>;
 	remove(key: string): Promise<void>;
@@ -59,6 +65,12 @@ export interface MediaAssetData {
 	hasAudio?: boolean;
 	ephemeral?: boolean;
 	thumbnailUrl?: string;
+	/**
+	 * Set for media imported by reference: the user's own path, which is the
+	 * only copy there is. Absent for media the store holds bytes for, which is
+	 * anything that arrived as bytes with no path behind it.
+	 */
+	sourcePath?: string;
 }
 
 export type SerializedScene = Omit<TScene, "createdAt" | "updatedAt"> & {

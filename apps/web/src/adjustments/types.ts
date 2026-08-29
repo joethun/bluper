@@ -48,23 +48,11 @@ export interface AdjustmentHighPass {
 	radius: number;
 }
 
-/**
- * Redraws the layer over itself with a blend mode. `screen` lifts shadows far
- * more than highlights and `multiply` deepens them, which is what makes this a
- * usable stand-in for tone-range sliders.
- */
-interface AdjustmentToneCurve {
-	kind: "toneCurve";
-	compositeOperation: GlobalCompositeOperation;
-	alpha: number;
-}
-
 export type AdjustmentOverlay =
 	| AdjustmentWash
 	| AdjustmentVignette
 	| AdjustmentGrain
-	| AdjustmentHighPass
-	| AdjustmentToneCurve;
+	| AdjustmentHighPass;
 
 /**
  * What an adjustment contributes to a layer: a chunk of CSS filter chain plus

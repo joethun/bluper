@@ -32,7 +32,6 @@ type AnimationPropertyPath =
 	| "adjust.hue"
 	| "adjust.brightness"
 	| "adjust.contrast"
-	| "adjust.highlight"
 	| "adjust.shadow"
 	| "adjust.sharpness"
 	| "adjust.vignette"

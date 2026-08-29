@@ -6,18 +6,21 @@
  * clip on the timeline that renders nothing. `.m4a`, `.mka` and audio-only
  * `.webm` files all arrive this way.
  *
- * ## Why the file is written before it is read
+ * ## Two ways in
  *
  * The probe runs in the shell, against a path — that is the whole point of it,
  * since ffmpeg reads containers the webview has never heard of and needs no
- * decoder in the page to answer. But a file the user has just dropped is a
- * `File` in the page with no path anywhere.
+ * decoder in the page to answer.
  *
- * So it is streamed to a scratch path first, probed, and the scratch removed.
- * That is one extra write per import, and it is a real cost on a large file.
- * The way to remove it is to write the file to its final place in the media
- * store *first* and probe it there — which is a change to the import flow's
- * order rather than to this module, and is worth doing on its own.
+ * Media imported by reference already is a path, so {@link probeMediaPath}
+ * reads the user's own file where it lies and writes nothing at all.
+ *
+ * Media that arrives as bytes — pasted, or dropped from another app — has no
+ * path anywhere, so {@link probeStagedFile} streams it to a scratch file and
+ * probes that. The scratch is *kept* and handed back: the import moves it into
+ * the media store rather than streaming the same bytes a second time, which is
+ * what a rename costs instead of a copy. An import that is abandoned deletes
+ * it, and `sweep_stale_scratch_files` reclaims anything a crash leaves behind.
  */
 
 import {
@@ -69,62 +72,98 @@ export type MediaProbeResult =
  * than any webview's — so the same probe answers for a camcorder's `.m2ts`
  * and for a `.flac`.
  */
-export async function probeMediaFile({
-	file,
+export async function probeMediaPath({
+	path,
 }: {
-	file: File;
+	path: string;
 }): Promise<MediaProbeResult> {
 	if (!tauriAvailable()) {
 		return { status: "unreadable", reason: "container" };
 	}
 
-	let scratch: string | null = null;
+	let native: NativeMediaProbe;
 	try {
-		scratch = await writeToScratch({ file });
+		native = await tauriProbeMedia({ path });
 	} catch (error) {
+		// Thrown while sniffing the container, so nothing was recognised.
 		return { status: "unreadable", reason: "container", error };
 	}
 
-	try {
-		let native: NativeMediaProbe;
-		try {
-			native = await tauriProbeMedia({ path: scratch });
-		} catch (error) {
-			// Thrown while sniffing the container, so nothing was recognised.
-			return { status: "unreadable", reason: "container", error };
-		}
-
-		const isVideo = native.kind === "video";
-		if (!isVideo && !native.hasAudio) {
-			return { status: "unreadable", reason: "no-tracks" };
-		}
-
-		const thumbnailUrl =
-			isVideo && native.canDecodeVideo
-				? await tauriMediaThumbnail({ path: scratch }).catch(() => null)
-				: null;
-
-		return {
-			status: "ok",
-			probe: {
-				type: isVideo ? "video" : "audio",
-				duration: native.durationSeconds,
-				width: native.width,
-				height: native.height,
-				fps: native.fps,
-				hasAudio: native.hasAudio,
-				videoCodec: native.videoCodec,
-				audioCodec: native.audioCodec,
-				canDecodeVideo: native.canDecodeVideo,
-				// The shell decodes audio itself, so a track it found is a
-				// track it can read. There is no second engine to disagree.
-				canDecodeAudio: native.hasAudio,
-				thumbnailUrl,
-			},
-		};
-	} finally {
-		await tauriRemoveFile({ path: scratch }).catch(() => {});
+	const isVideo = native.kind === "video";
+	if (!isVideo && !native.hasAudio) {
+		return { status: "unreadable", reason: "no-tracks" };
 	}
+
+	const thumbnailUrl =
+		isVideo && native.canDecodeVideo
+			? await tauriMediaThumbnail({ path }).catch(() => null)
+			: null;
+
+	return {
+		status: "ok",
+		probe: {
+			type: isVideo ? "video" : "audio",
+			duration: native.durationSeconds,
+			width: native.width,
+			height: native.height,
+			fps: native.fps,
+			hasAudio: native.hasAudio,
+			videoCodec: native.videoCodec,
+			audioCodec: native.audioCodec,
+			canDecodeVideo: native.canDecodeVideo,
+			// The shell decodes audio itself, so a track it found is a
+			// track it can read. There is no second engine to disagree.
+			canDecodeAudio: native.hasAudio,
+			thumbnailUrl,
+		},
+	};
+}
+
+/**
+ * Probes bytes that have no path of their own, keeping what it wrote.
+ *
+ * `stagedPath` is a scratch file holding the whole of `file`. The caller owns
+ * it from here: an import that goes on to store the media moves it into place,
+ * and one that gives up deletes it.
+ */
+export type StagedProbe = {
+	result: MediaProbeResult;
+	stagedPath: string | null;
+};
+
+export async function probeStagedFile({
+	file,
+}: {
+	file: File;
+}): Promise<StagedProbe> {
+	if (!tauriAvailable()) {
+		return {
+			result: { status: "unreadable", reason: "container" },
+			stagedPath: null,
+		};
+	}
+
+	let stagedPath: string;
+	try {
+		stagedPath = await writeToScratch({ file });
+	} catch (error) {
+		return {
+			result: { status: "unreadable", reason: "container", error },
+			stagedPath: null,
+		};
+	}
+
+	return { result: await probeMediaPath({ path: stagedPath }), stagedPath };
+}
+
+/** Deletes a scratch file left by {@link probeStagedFile}. */
+export async function discardStagedFile({
+	stagedPath,
+}: {
+	stagedPath: string | null;
+}): Promise<void> {
+	if (!stagedPath) return;
+	await tauriRemoveFile({ path: stagedPath }).catch(() => {});
 }
 
 /**

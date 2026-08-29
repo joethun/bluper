@@ -88,7 +88,7 @@ export class AddMediaAssetCommand extends Command {
 				this.restoreProjectFpsAfterFailedSave({ editor });
 
 				if (storageService.isQuotaExceededError({ error })) {
-					toast.error("Not enough browser storage", {
+					toast.error("Not enough disk space", {
 						description: error instanceof Error ? error.message : undefined,
 					});
 				}

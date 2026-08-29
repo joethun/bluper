@@ -23,13 +23,13 @@
 		},
 		"build": {
 			"dependsOn": ["^build"],
-			"outputs": [
-				".next/**",
-				"!.next/cache/**",
-				"out/**",
-				"../src-tauri/target/**"
-			],
+			"outputs": [".next/**", "!.next/cache/**", "out/**"],
 			"env": ["NODE_ENV"]
+		},
+		"@bluper/desktop#build": {
+			"dependsOn": ["^build"],
+			"env": ["NODE_ENV"],
+			"cache": false
 		},
 		"dev": {
 			"persistent": true,

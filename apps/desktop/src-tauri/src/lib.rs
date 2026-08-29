@@ -199,6 +199,8 @@ pub fn run() {
             native_fs::bluper_remove_file,
             native_fs::bluper_move_file,
             native_fs::bluper_available_disk_bytes,
+            native_fs::bluper_stat_file,
+            native_fs::bluper_allow_media_file,
             native_fs::bluper_diagnostic_log,
             media_decode::bluper_decode_video_gop,
             media_decode::bluper_probe_media,
@@ -230,6 +232,14 @@ pub fn run() {
                 // 32-48px on Linux, 16-24px on Windows) is worth shipping: the
                 // compositor resamples anything bigger and the result looks
                 // muddy. 32x32 is the overlap.
+                //
+                // This reaches X11 and Windows only. Wayland has no per-window
+                // icon, so the call succeeds and changes nothing there — the
+                // compositor matches the toplevel's app_id (`bluper-desktop`,
+                // which GTK takes from the binary name) to a
+                // `bluper-desktop.desktop` entry and reads its `Icon=`. The
+                // .deb and .rpm install that entry; for a bare
+                // `target/release` build, `script/install-desktop-entry` does.
                 if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!(
                     "../icons/32x32.png"
                 )) {

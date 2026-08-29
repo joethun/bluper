@@ -170,12 +170,7 @@ const ADJUSTMENT_GROUPS: &[(&str, &[&str])] = &[
     ),
     (
         "Lightness",
-        &[
-            "adjust.brightness",
-            "adjust.contrast",
-            "adjust.highlight",
-            "adjust.shadow",
-        ],
+        &["adjust.brightness", "adjust.contrast", "adjust.shadow"],
     ),
     (
         "Texture",
@@ -259,7 +254,6 @@ fn adjustment_element_params() -> Vec<ParamDefinition> {
         ),
         adjust_param("brightness", "Brightness", true, Some(LUMINANCE_GRADIENT)),
         adjust_param("contrast", "Contrast", true, Some(LUMINANCE_GRADIENT)),
-        adjust_param("highlight", "Highlight", true, None),
         adjust_param("shadow", "Shadow", true, None),
         adjust_param("sharpness", "Sharpness", false, None),
         adjust_param("vignette", "Vignette", false, None),

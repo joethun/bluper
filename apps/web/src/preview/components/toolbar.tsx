@@ -44,10 +44,12 @@ export function PreviewToolbar({
 						)}
 					</Button>
 				</GridPopover> */}
-				{/* `size="icon"` like the play and zoom buttons — without it a `text`
-				    button falls back to the `text` size (`p-0`), so this one icon had
-				    no hit area or hover target of its own. */}
-				<Button variant="text" size="icon" onClick={onToggleFullscreen}>
+				{/* `size="icon"` like the play and zoom buttons — without it a button
+				    with no size falls back to the `text` size (`p-0`), so this one icon
+				    had no hit area or hover target of its own. `ghost` gives it the
+				    same lit-panel hover every other icon button in the editor has;
+				    `text` only faded the glyph, which read as the button going away. */}
+				<Button variant="ghost" size="icon" onClick={onToggleFullscreen}>
 					<MaximizeIcon />
 				</Button>
 			</div>
@@ -132,7 +134,7 @@ function PlayPauseButton() {
 
 	return (
 		<Button
-			variant="text"
+			variant="ghost"
 			size="icon"
 			onClick={() => invokeAction("toggle-play")}
 		>

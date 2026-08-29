@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { SearchIcon, SparklesIcon } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { DraggableItem } from "@/components/editor/panels/assets/draggable-item";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
-import { PanelEmptyState } from "@/components/editor/panels/panel-empty-state";
-import { SectionTitle } from "@/components/section";
-import { Input } from "@/components/ui/input";
+import {
+	Section,
+	SectionContent,
+	SectionHeader,
+	SectionTitle,
+} from "@/components/section";
 import {
 	findTransitionCutAtTime,
 	getTransitionDefinitionsForMenu,
@@ -16,11 +18,12 @@ import {
 import { useEditor } from "@/editor/use-editor";
 import { frameRateToFloat } from "@/fps/utils";
 import { TICKS_PER_SECOND, type MediaTime } from "@/wasm";
-import type {
-	TransitionCategory,
-	TransitionDefinition,
-} from "@/transitions/types";
-import { cn } from "@/utils/ui";
+import type { TransitionDefinition } from "@/transitions/types";
+import { TransitionPreview } from "./transition-preview";
+import {
+	type TransitionPreviewFrames,
+	useTransitionPreviewFrames,
+} from "./preview-frames";
 import {
 	TRANSITION_CATEGORY_LABELS,
 	TRANSITION_CATEGORY_ORDER,
@@ -30,93 +33,115 @@ import {
  * The transition browser. A transition belongs to a cut rather than to any one
  * clip, so it is aimed at a junction: either by dragging onto one, or by parking
  * the playhead on one and pressing add.
+ *
+ * There is no search box and no instructions above the grid. The whole library
+ * is two dozen tiles in four named groups — less than a screenful — so a filter
+ * cost a permanently occupied row to save nobody any scrolling, and the sentence
+ * under it explained a drag that the tiles now demonstrate on hover.
  */
 export function TransitionsView() {
-	const [search, setSearch] = useState("");
 	const definitions = getTransitionDefinitionsForMenu();
-	const matches = useMemo(
-		() => filterDefinitions({ definitions, search }),
-		[definitions, search],
-	);
+	// Decoded once for the whole panel rather than per tile: every tile blends
+	// the same two stills, and two dozen decodes of one clip is two dozen trips
+	// through ffmpeg for one pair of pictures.
+	const frames = useTransitionPreviewFrames();
 
 	return (
-		<PanelView title="Transitions">
-			<div className="flex flex-col gap-3">
-				<div className="relative">
-					<SearchIcon className="text-muted-foreground pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2" />
-					<Input
-						placeholder="Search transitions..."
-						value={search}
-						onChange={(event) => setSearch(event.target.value)}
-						size="xs"
-						className="w-full pl-8"
-					/>
-				</div>
-
-				<p className="text-muted-foreground text-xs">
-					Drag one onto the join between two clips, or park the playhead on a
-					join and press add.
-				</p>
-
-				{matches.length === 0 ? (
-					<PanelEmptyState
-						icon={SparklesIcon}
-						title="No transitions"
-						description={`Nothing matches “${search}”.`}
-					/>
-				) : (
-					TRANSITION_CATEGORY_ORDER.filter((category) =>
-						matches.some((definition) => definition.category === category),
-					).map((category) => (
-						<div key={category} className="flex flex-col gap-2">
-							<SectionTitle>
-								{TRANSITION_CATEGORY_LABELS[category]}
-							</SectionTitle>
-							<div
-								className="grid gap-2"
-								style={{
-									gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))",
-								}}
-							>
-								{matches
-									.filter((definition) => definition.category === category)
-									.map((definition) => (
-										<TransitionItem
-											key={definition.type}
-											definition={definition}
-										/>
-									))}
-							</div>
+		// The Effects tab's shape, and for the same reason: a library of tiles in
+		// named groups. `pt-0`/`px-0` take off the padding the asset panels put
+		// round their grids, so the sections run to the panel edges and their rules
+		// divide the list the way they do over there.
+		<PanelView
+			title="Transitions"
+			scrollClassName="pt-0"
+			contentClassName="px-0 pb-0"
+		>
+			{TRANSITION_CATEGORY_ORDER.filter((category) =>
+				definitions.some((definition) => definition.category === category),
+			).map((category) => (
+				<Section
+					key={category}
+					sectionKey={`transitions:${category}`}
+					collapsible
+				>
+					<SectionHeader>
+						<SectionTitle>{TRANSITION_CATEGORY_LABELS[category]}</SectionTitle>
+					</SectionHeader>
+					<SectionContent>
+						<div className="grid grid-cols-3 gap-2">
+							{definitions
+								.filter((definition) => definition.category === category)
+								.map((definition) => (
+									<TransitionItem
+										key={definition.type}
+										definition={definition}
+										frames={frames}
+									/>
+								))}
 						</div>
-					))
-				)}
-			</div>
+					</SectionContent>
+				</Section>
+			))}
 		</PanelView>
 	);
 }
 
-function TransitionItem({ definition }: { definition: TransitionDefinition }) {
+function TransitionItem({
+	definition,
+	frames,
+}: {
+	definition: TransitionDefinition;
+	frames: TransitionPreviewFrames | null;
+}) {
 	const addAtPlayhead = useAddTransitionAtPlayhead();
+	const [isHovered, setIsHovered] = useState(false);
 
 	return (
-		<DraggableItem
-			name={definition.name}
-			preview={<TransitionPreview category={definition.category} />}
-			onAddToTimeline={({ currentTime }) =>
-				addAtPlayhead({ definition, currentTime })
-			}
-			dragData={{
-				id: definition.type,
-				name: definition.name,
-				type: "transition",
-				transitionType: definition.type,
-				targetElementTypes: [...TRANSITION_TARGET_ELEMENT_TYPES],
-			}}
-			aspectRatio={1}
-			isRounded
-			variant="card"
-			containerClassName="w-full"
-		/>
+		// The label sits outside `DraggableItem` so it can be the Effects tile's
+		// own — two lines, clamped, rather than one truncated — and this wrapper
+		// carries the `group` the thumbnail's hover border and add button answer
+		// to, so pointing at the name lights the tile the same way.
+		//
+		// Hover is tracked here rather than on the canvas because the add button
+		// sits over the thumbnail as a sibling: crossing onto it would otherwise
+		// count as leaving, and restart the pass.
+		<div
+			className="group flex flex-col gap-1.5"
+			onMouseEnter={() => setIsHovered(true)}
+			onMouseLeave={() => setIsHovered(false)}
+		>
+			<DraggableItem
+				name={definition.name}
+				preview={
+					<TransitionPreview
+						definition={definition}
+						frames={frames}
+						isPlaying={isHovered}
+					/>
+				}
+				onAddToTimeline={({ currentTime }) =>
+					addAtPlayhead({ definition, currentTime })
+				}
+				dragData={{
+					id: definition.type,
+					name: definition.name,
+					type: "transition",
+					transitionType: definition.type,
+					targetElementTypes: [...TRANSITION_TARGET_ELEMENT_TYPES],
+				}}
+				aspectRatio={5 / 4}
+				variant="card"
+				shouldShowLabel={false}
+				containerClassName="w-full"
+				// The Effects tile's chrome: a border that is always there and darkens
+				// under the pointer, in place of the asset grid's ring that only
+				// appears on hover. `ring-0` retires that ring.
+				previewClassName="rounded-sm border ring-0 transition-colors group-hover:border-muted-foreground/60"
+			/>
+			<span className="text-muted-foreground line-clamp-2 text-xs leading-tight">
+				{definition.name}
+			</span>
+		</div>
 	);
 }
 
@@ -169,47 +194,4 @@ function useAddTransitionAtPlayhead() {
 			transitionType: definition.type,
 		});
 	};
-}
-
-/**
- * A schematic of two clips meeting, with the seam drawn the way this category
- * joins them. Enough to tell the groups apart at a glance without rendering a
- * real transition per tile.
- */
-function TransitionPreview({ category }: { category: TransitionCategory }) {
-	return (
-		<div className="bg-accent relative size-full overflow-hidden">
-			<div className="absolute inset-y-0 left-0 w-1/2 bg-foreground/15" />
-			<div className="absolute inset-y-0 right-0 w-1/2 bg-foreground/30" />
-			<div
-				className={cn(
-					"absolute inset-y-0 left-1/2 -translate-x-1/2",
-					category === "basic" &&
-						"w-1/2 bg-gradient-to-r from-transparent via-foreground/25 to-transparent",
-					category === "wipe" && "w-px bg-foreground/60",
-					category === "motion" && "w-1.5 bg-foreground/50",
-					category === "camera" && "w-1/3 bg-foreground/20 blur-[2px]",
-				)}
-			/>
-		</div>
-	);
-}
-
-function filterDefinitions({
-	definitions,
-	search,
-}: {
-	definitions: TransitionDefinition[];
-	search: string;
-}): TransitionDefinition[] {
-	const query = search.trim().toLowerCase();
-	if (!query) return definitions;
-
-	return definitions.filter((definition) => {
-		if (definition.name.toLowerCase().includes(query)) return true;
-		if (definition.type.includes(query)) return true;
-		return definition.keywords.some((keyword) =>
-			keyword.toLowerCase().includes(query),
-		);
-	});
 }

@@ -20,9 +20,15 @@ import type { MediaType } from "@/media/types";
  */
 
 /**
- * The `accept` for a file input. Wildcards come first so anything the OS knows
- * to be media is offered; the explicit extensions cover the containers it has
- * no MIME type for, which is exactly the set the wildcards would hide.
+ * Every media type the editor accepts, in `accept` syntax. Wildcards come first
+ * so anything the OS knows to be media is covered; the explicit extensions
+ * cover the containers it has no MIME type for, which is exactly the set the
+ * wildcards would hide.
+ *
+ * Nothing renders this as an attribute any more — import goes through the OS
+ * dialog, which takes {@link MEDIA_FILE_EXTENSIONS} instead. It stays because
+ * it is the registry's own summary of what can be opened, and the extension
+ * list is derived from it.
  */
 export const MEDIA_FILE_ACCEPT = _mediaFileAcceptValue().accept;
 
@@ -49,6 +55,33 @@ export function getMediaTypeFromFile({
 			.mediaType ?? null
 	);
 }
+
+/**
+ * What kind of media a *path* holds, judged on its extension alone.
+ *
+ * Media imported by reference never becomes a `File`, so there is no OS MIME
+ * guess to consult — only the name. That is the weaker of the two signals
+ * {@link getMediaTypeFromFile} uses, which matters only for a file whose
+ * extension is missing or wrong; the probe still has the final say on what is
+ * actually inside.
+ */
+export function getMediaTypeFromName({
+	name,
+}: {
+	name: string;
+}): MediaType | null {
+	return _getMediaTypeFromFileValue({ name }).mediaType ?? null;
+}
+
+/**
+ * The media extensions the registry knows, without their leading dots, for the
+ * native open dialog — which takes a filter list rather than an `accept`
+ * string. Derived from {@link MEDIA_FILE_ACCEPT} so both come from one table.
+ */
+export const MEDIA_FILE_EXTENSIONS: string[] = MEDIA_FILE_ACCEPT.split(",")
+	.map((entry) => entry.trim())
+	.filter((entry) => entry.startsWith("."))
+	.map((entry) => entry.slice(1));
 
 /**
  * Why a recognised file cannot be used, phrased as advice. Returns null for

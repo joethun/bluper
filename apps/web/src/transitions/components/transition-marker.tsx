@@ -4,7 +4,11 @@ import { ChevronsRightLeftIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { PropertyParamField } from "@/components/editor/panels/properties/components/property-param-field";
 import { usePropertyDraft } from "@/components/editor/panels/properties/hooks/use-property-draft";
-import { SectionField, SectionFields } from "@/components/section";
+import {
+	SectionContent,
+	SectionField,
+	SectionFields,
+} from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { NumberField } from "@/components/ui/number-field";
 import {
@@ -117,8 +121,11 @@ export function TransitionMarker({
 						<ChevronsRightLeftIcon className="size-3" />
 					</button>
 				</PopoverTrigger>
+				{/* `p-0` and a titled bar of its own, like the export popover: the
+				    default `p-4` box put this panel's fields on a gutter no other
+				    panel in the editor uses, and hung its title in the middle of it. */}
 				<PopoverContent
-					className="w-64"
+					className="w-64 overflow-hidden p-0"
 					align="center"
 					onMouseDown={stopTimelineGestures}
 				>
@@ -171,49 +178,52 @@ function TransitionSettings({
 	const commit = () => editor.timeline.commitPreview();
 
 	return (
-		<div className="flex flex-col gap-3">
-			<div className="flex items-center justify-between gap-2">
-				<span className="text-sm font-medium">
+		<div className="flex flex-col">
+			<div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3.5">
+				<span className="truncate text-sm font-medium">
 					{definition?.name ?? `${transition.type} (unavailable)`}
 				</span>
 				<Button
 					variant="ghost"
 					size="icon"
 					aria-label="Remove transition"
+					className="shrink-0"
 					onClick={onRemove}
 				>
 					<Trash2Icon />
 				</Button>
 			</div>
 
-			<SectionFields>
-				<SectionField label="Duration">
-					<DurationField
-						duration={minMediaTime({
-							a: transition.duration,
-							b: placement.maxDuration,
-						})}
-						maxDuration={placement.maxDuration}
-						onPreview={(duration) => preview({ updates: { duration } })}
-						onCommit={commit}
-					/>
-				</SectionField>
-				{definition?.params.map((param) => (
-					<PropertyParamField
-						key={param.key}
-						param={param}
-						value={transition.params[param.key] ?? param.default}
-						onPreview={(value: ParamValue) =>
-							preview({
-								updates: {
-									params: { ...transition.params, [param.key]: value },
-								},
-							})
-						}
-						onCommit={commit}
-					/>
-				))}
-			</SectionFields>
+			<SectionContent className="pt-3.5">
+				<SectionFields>
+					<SectionField label="Duration">
+						<DurationField
+							duration={minMediaTime({
+								a: transition.duration,
+								b: placement.maxDuration,
+							})}
+							maxDuration={placement.maxDuration}
+							onPreview={(duration) => preview({ updates: { duration } })}
+							onCommit={commit}
+						/>
+					</SectionField>
+					{definition?.params.map((param) => (
+						<PropertyParamField
+							key={param.key}
+							param={param}
+							value={transition.params[param.key] ?? param.default}
+							onPreview={(value: ParamValue) =>
+								preview({
+									updates: {
+										params: { ...transition.params, [param.key]: value },
+									},
+								})
+							}
+							onCommit={commit}
+						/>
+					))}
+				</SectionFields>
+			</SectionContent>
 		</div>
 	);
 }

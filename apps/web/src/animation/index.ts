@@ -1,6 +1,8 @@
-// Keyframe editing lives in `editor-core::animation::keyframes`; only
-// `upsertPathKeyframe` is still TypeScript, because it takes the param layout's
-// `decompose` and a `coerceValue` callback, and closures do not serialise.
+// Keyframe editing lives in `editor-core::animation::keyframes`; everything
+// re-exported below is a typed wrapper over it, `upsertPathKeyframe` included.
+// That one takes a `ParamDefinition` rather than the `decompose` and
+// `coerceValue` closures it used to — closures do not serialise, and Rust
+// derives the layout, the coercion and the decomposition from the param itself.
 export {
 	cloneAnimations,
 	removeElementKeyframe,

@@ -56,7 +56,6 @@ test("isAnimationPropertyPath matches its fixed list", () => {
 		"adjust.hue",
 		"adjust.brightness",
 		"adjust.contrast",
-		"adjust.highlight",
 		"adjust.shadow",
 		"adjust.sharpness",
 		"adjust.vignette",

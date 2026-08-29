@@ -37,12 +37,24 @@ There is one path and it is the native one. The browser fallbacks that used to s
 
 The desktop build exists to escape the browser's memory and storage ceilings, so nothing may move a media-sized payload through an ordinary IPC argument. Tauri serialises command arguments with `JSON.stringify`, which turns a `Uint8Array` into an array of numbers — a gigabyte of video becomes a billion JS numbers before Rust sees a byte.
 
-- **Writing**: open a `TauriWriteStream` and write chunks. The typed array is passed as the *whole* payload so Tauri sends it as a raw body; scalars ride in headers. Never `blob.arrayBuffer()` a whole file to hand it over.
-- **Reading**: don't. Media is served over the `asset:` protocol, which answers range requests straight off disk. `readMediaSourceBytes` exists for the few things that genuinely need every byte (decoding an audio track), and nothing else should use it.
+- **Writing**: open a `TauriWriteStream` and write chunks. The typed array is passed as the *whole* payload so Tauri sends it as a raw body; scalars ride in headers. Never `blob.arrayBuffer()` a whole file to hand it over. The export commands in `mp4_export.rs` use the same bridge for frames and audio.
+- **Reading**: don't. Media is served over the `asset:` protocol, which answers range requests straight off disk. That is also how the shell's own decode commands answer: they write a scratch file and return its path, so a GOP, a decoded frame or a track's PCM never crosses as an argument either. `readMediaSourceBytes` remains for the last few things that genuinely need every byte in the page, and nothing new should use it.
 
-### Media has no `File` on desktop
+### Decoding runs in the shell
 
-`MediaAsset.file` is optional. An asset loaded from disk carries `path` and `url` instead, and materialising a `File` for it would put the whole clip back in memory. Anything that decodes media takes a `MediaSourceRef` from `createMediaSource()` — see `apps/web/src/media/source.ts` — never a `File` directly.
+Container parsing, seeking and audio decode are `ffmpeg-next` in `apps/desktop/src-tauri/src/` — `media_decode.rs`, `media_frames.rs`, `media_audio.rs`, over an LRU pool of open contexts in `media_readers.rs`. The webview's `VideoDecoder` is still what plays *forwards*, and should stay there: the sink feeds one packet and takes one frame, measured at 0.71 ms — well inside a frame budget. Seeking is the opposite case. A seek into a 1,499-frame GOP costs ~700 ms through `VideoDecoder`, which has to decode from the keyframe before it can show anything, against ~125 ms through ffmpeg, which threads across cores and sends back only the frame asked for. Don't move one of these into the page to save an IPC hop — the hop is not what costs. Each module's doc comment carries the measurements.
+
+`ffmpeg-next` does not build for `wasm32-unknown-unknown` — it wraps a native C library. `editor-core` target-gates it under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`, which is how `MediaSink` (the encoder) can live in the domain crate while the wasm build never sees it. Anything else that needs ffmpeg goes behind the same gate or into the desktop crate; it must never end up on the surface `rust/wasm/src/wasm.rs` re-exports.
+
+### Media is referenced, not copied
+
+Imported media stays where the user put it. `MediaAsset.file` is optional and only exists while the editor still holds what was just imported; an asset loaded from disk carries `path` and `url` instead, and materialising a `File` for it would put the whole clip back in memory. Anything that decodes media takes a `MediaSourceRef` from `createMediaSource()` — see `apps/web/src/media/source.ts` — never a `File` directly.
+
+Referencing has consequences that code has to keep:
+
+- `sourcePath` is the identity a relink restores; `path` is that file resolved for this run, and is absent while it cannot be found. `missing: true` marks an asset whose file has moved — it keeps every piece of metadata recorded at import, so the timeline still lays out correctly and only the pixels are gone. Never drop an asset because its file is absent.
+- The asset protocol is granted per file, by `bluper_allow_media_file`, at import and again on every project load. The grant is in-memory and lasts the process. Don't widen `assetProtocol.scope` to a directory glob to avoid this — a glob broad enough to cover "wherever the user keeps video" hands the webview most of the disk.
+- Only an OS open dialog and an OS drag-drop produce a real path. An `<input type="file">` and an HTML `drop` hand over a `File` whose location can never be learned, so neither is an import route any more. The clipboard still arrives that way and is the one thing copied into the project's media store. `media/processing.ts` has a route for each; `media/native-drop.ts` owns the OS drop.
 
 ### Exports stream
 
@@ -50,13 +62,13 @@ The desktop build exists to escape the browser's memory and storage ceilings, so
 
 ### Permissions
 
-Capabilities live in `apps/desktop/src-tauri/capabilities/default.json`. Add a permission there whenever a new plugin command is invoked; Tauri 2 enforces this at runtime. Commands defined by the app itself (`native_fs.rs`) don't need an entry, so they carry their own path checks: streams may only be opened under the app's data and cache directories.
+Capabilities live in `apps/desktop/src-tauri/capabilities/default.json`. Add a permission there whenever a new *plugin* command is invoked; Tauri 2 enforces this at runtime. Commands the app defines itself — everything in `native_fs.rs`, `media_decode.rs`, `media_frames.rs`, `media_audio.rs` and `mp4_export.rs` — need no entry, which is exactly why they carry their own path checks: streams may only be opened under the app's data and cache directories, and a referenced media file is reachable only after `bluper_allow_media_file` has granted it by name.
 
 New paths the webview needs to *read* go in `assetProtocol.scope` in `tauri.conf.json`, as narrowly as possible. `tauri-plugin-fs` is intentionally not registered — see `apps/desktop/README.md`.
 
 ### Verifying a change
 
-`BLUPER_SELFTEST=1 ./target/release/bluper-desktop` runs `/desktop-check` against the real modules and prints results to stdout. Add a check there for any new desktop-only path; it is the only place these paths are covered, since `bun test` has no Tauri runtime. Build with `bunx tauri build --no-bundle` — a plain `cargo build` produces a binary that still points at the dev server.
+`bun run check:desktop` is the whole loop: rebuild the renderer, `bunx tauri build --no-bundle`, then `BLUPER_SELFTEST=1 ./target/release/bluper-desktop`, which opens `/desktop-check` against the real modules and prints each result to stdout. Add a check there for any new desktop-only path; it is the only place these paths are covered, since `bun test` has no Tauri runtime. Never substitute a plain `cargo build` — it produces a binary that still points at the dev server.
 
 `script/capture-window` screenshots the running shell — `--route` to open a screen, `--eval` to drive it into the state you want. That is how a UI change gets *looked* at: `tsc` and `next build` both pass on a layout that renders wrong, and there is no browser build to open instead. It drives the real window, so what it captures is the real media pipeline.
 
@@ -75,26 +87,26 @@ mock.module("bluper-wasm", () => wasmNative);
 
 ### Porting logic to Rust
 
-`rust/crates/editor-core` is the destination for domain logic (`model`, `project`, `commands`, `params`, `animation`). It is named `editor-core`, not `core`: a local crate called `core` shadows Rust's built-in `core` in the extern prelude of every dependent crate, which makes `::core::mem` and friends unreachable there.
+`rust/crates/editor-core` is the destination for domain logic — `model`, `project`, `params`, `animation`, `timeline`, `clip`, `text`, `masks`, `effects`, `export`, `storage` and the rest already there. It is named `editor-core`, not `core`: a local crate called `core` shadows Rust's built-in `core` in the extern prelude of every dependent crate, which makes `::core::mem` and friends unreachable there.
 
-What crosses matters as much as what moves. A module is ready for Rust when its payload is small and its callers are user-paced; it is *not* ready while its cost model depends on caching JS object identity. `animation/interpolation.ts` is the standing example: `normalizeScalarChannel` memoises on a `WeakMap` keyed by the channel object, and `rendering/animation-values.ts` reads six or more animated properties per element per frame. Moving the evaluator now would serialise a whole channel per read on the path `perf::record("wasm.deserialize", …)` already exists to watch — so it waits until Rust owns the channel and there is nothing to serialise. `adjustments/clip.ts` has the same `WeakMap` shape and the same answer. `animation/curve_bridge` moved instead: same maths, but two keys per call and only while someone is dragging a curve.
+What crosses matters as much as what moves. A module is ready for Rust when its payload is small and its callers are user-paced; a per-frame reader whose cost model depends on caching JS object identity is not ready *as written*. The animation evaluator was the standing example of this, and how it was resolved is the pattern to copy.
 
-That claim about `interpolation.ts` was measured, not argued. The Rust evaluator exists, in `editor-core::animation::interpolation`, and it is bit-exact against the TypeScript over 6,000 generated channels. It is still not what runs, because crossing the boundary per read costs this, at 120 reads per frame:
+The TypeScript kept a `WeakMap` keyed on the channel object, so `normalizeScalarChannel` ran once per channel and every later read bisected a normalised array. Rust had no stable identity to cache against, so each call re-serialised *and* re-normalised, and at 120 reads per frame it lost badly — measured, not argued:
 
-| keys per channel | TypeScript | Rust across the boundary |
+| keys per channel | TypeScript | Rust, one call per read |
 |---|---|---|
 | 3 | 0.35 ms/frame | 1.70 ms/frame |
 | 10 | 0.40 ms/frame | 4.31 ms/frame |
 | 30 | 0.40 ms/frame | 11.73 ms/frame |
 
-TypeScript stays flat because the `WeakMap` normalises once per channel and reads bisect. Rust grows with the key count because every call re-serialises the channel *and* re-normalises it — it has no stable identity to cache against. At 30 keys that is 70% of a 16.6 ms frame. The code is not the problem; the boundary is, and it stops being one when Rust owns the channel and there is nothing to send.
+The fix was not to make the boundary cheaper but to cross it fewer times. `resolveTransformAtTime` in `editor-core` does all five transform reads internally, so `rendering/animation-values.ts` makes one call per element per frame instead of five, and the channel is serialised once instead of five times. The evaluator now *is* what runs — `apps/web/src/animation/interpolation.ts` is gone, and `apps/web/src/wasm/animation.ts` is a thin re-export of `editor-core::animation::interpolation`.
 
-The two implementations are held equal by `interpolation-parity.test.ts` in the meantime. That test is the whole reason keeping both is safe: delete it and they drift.
+So: when a per-frame reader looks too chatty to port, batch the reads on the Rust side before concluding it can't move. `perf::record("wasm.deserialize", …)` is what to watch while doing it. The same applies to `adjustments/clip.ts`, which still memoises its fold on a `WeakMap` keyed by the param bag — sound because element params are replaced rather than mutated on edit — and would need the same treatment.
 
-Two more things block a port, both found the same way — by reading before writing:
+Two blockers that used to be listed here are gone, and both are worth knowing as precedent rather than as current warnings:
 
-- **Behaviour stored as data.** `ParamChannelLayout` in `apps/web/src/params/index.ts` carries `decompose`/`compose` closures. Functions do not serialise, so `getParamChannelLayout` cannot cross until the layout is redescribed as a discriminant Rust can switch on rather than a pair of callbacks.
-- **`toFixed` is not round-half-even.** `snapToStep` in `apps/web/src/utils/math.ts` ends with `Number(x.toFixed(digits))`. JavaScript rounds an exact tie away from zero; Rust's `{:.N}` and most other languages round half to even. `(0.5).toFixed(0)` is `"1"` in JS and `"0"` under half-even, and `(0.125).toFixed(2)` is `"0.13"` against `"0.12"`. Anything ported through this needs the JS rule written out and pinned by a parity case on exact binary ties, not a `format!` call.
+- **Behaviour stored as data.** `ParamChannelLayout` carried `decompose`/`compose` closures, and functions do not serialise. The answer was not to send them: the layout is a function of the param's type, so Rust derives it. `getParamChannelLayout` no longer exists, and `upsertPathKeyframe` takes the `ParamDefinition` itself. When a port is blocked by a callback, check whether the callback is really data in disguise.
+- **`toFixed` is not round-half-even.** `snapToStep` used to end with `Number(x.toFixed(digits))`. JavaScript rounds an exact tie away from zero while Rust's `{:.N}` rounds half to even — `(0.5).toFixed(0)` is `"1"` against `"0"`, `(0.125).toFixed(2)` is `"0.13"` against `"0.12"` — and the value moves by a whole step at exactly the boundaries a slider lands on. `editor-core::math` now writes both JS tie rules out longhand (`Math.round` breaks toward positive infinity, `toFixed` away from zero) rather than calling `format!`. Anything else ported through display rounding owes the same treatment plus a parity case on exact binary ties.
 
 Validation at the storage boundary lives in `editor-core::project`. Two rules it establishes, both worth keeping:
 
@@ -110,15 +122,16 @@ A generated name collides silently, too. Two `#[export]` option structs called `
 
 While a module is being ported, both implementations exist. Assert they agree with `findParityMismatch` from `@/testing/parity` — seeded generation, so a failure replays from the seed it reports — and delete the TypeScript only once parity holds. `equalsExact` is the default because the failure mode worth catching is numeric drift, which every "does it run" check in this repo passes.
 
+Deleting the TypeScript does not delete the test. Once the original is gone, the parity test becomes a pin on the Rust, run against a hand-rolled reference written in the test file — `apps/web/src/animation/__tests__/path-parity.test.ts` is the shape to copy. That way a drift in the Rust lands on the Rust side first, rather than shipping as a behavioural change nobody asked for.
+
 ### Platform differences
 
 Linux and Windows. Nothing platform-specific belongs in the UI: prefer a runtime probe over a compile-time or user-agent branch, because the same bundle ships to both webviews (WebKitGTK and WebView2) and to the browser. `supportsCanvasFilter()` is the pattern to copy — it draws a pixel and reads it back rather than trusting that a property exists.
 
-- **Rust**: platform code is `#[cfg]`-gated with a `#[cfg(not(any(unix, windows)))]` fallback, and its dependency is target-gated in `Cargo.toml` so neither platform pulls the other's. `available_bytes` in `native_fs.rs` is the only such split.
+- **Rust**: platform code is `#[cfg]`-gated with a `#[cfg(not(any(unix, windows)))]` fallback where a third case is reachable, and its dependency is target-gated in `Cargo.toml` so neither platform pulls the other's. There are exactly two such splits: `available_bytes` in `native_fs.rs` (`statvfs` / `GetDiskFreeSpaceExW`) and `attach_parent_console` in `lib.rs` (Windows only, so the self-check's stdout reaches the terminal that launched a GUI-subsystem binary).
 - **Bundle targets**: set per platform — `deb` + `rpm` on Linux, `nsis` on Windows. Tauri filters requested targets against what the host can build, so a target list naming the wrong platform produces *no* installer rather than an error — see `apps/desktop/README.md`.
 - **Origins differ**: Linux serves the app from `tauri://localhost` and Windows from `http://tauri.localhost`. Never hard-code either. Build asset URLs with `tauriConvertFileSrc()`, and if you add a check that inspects one, accept both forms.
 - **Storage**: media goes through `TauriMediaStore` on every platform — a per-project directory under `AppData`, never OPFS. WebKitGTK's broken OPFS forced the decision; WebView2 having working OPFS does not reverse it, because the objection is the origin quota, not the implementation. IndexedDB stays, and only for what is small: project and timeline JSON.
 
-Build-time system dependencies are Linux-only: WebViewGTK 4.1, libsoup-3.0, and javascriptcoregtk-4.1. Windows runners ship WebView2 already.
-
+Build-time system dependencies are Linux-only — see the install step in `.github/workflows/desktop-release.yml` for the authoritative list: `libwebkit2gtk-4.1-dev`, `libjavascriptcoregtk-4.1-dev`, `libsoup-3.0-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `patchelf`. Windows runners ship WebView2 already.
 

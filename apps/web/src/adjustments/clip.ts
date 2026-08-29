@@ -25,7 +25,6 @@ const CLIP_ADJUSTMENT_BINDINGS: ReadonlyArray<{
 	{
 		adjustmentType: "light",
 		params: {
-			highlights: "adjust.highlight",
 			shadows: "adjust.shadow",
 		},
 	},

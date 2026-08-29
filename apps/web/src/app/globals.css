@@ -139,6 +139,23 @@
     @apply bg-background text-foreground;
     /* Prevent back/forward swipe */
     overscroll-behavior-x: contain;
+    /*
+      This is an application window, not a document. A drag that begins on a
+      panel, a track or a label would otherwise run a text selection across
+      half the UI and leave it highlighted, and the empty space between
+      controls would highlight along with it. Selection is off by default and
+      switched back on only where selecting text is the point — the tailwind
+      `select-text` utility still wins wherever it is applied, because an
+      inherited value loses to any declaration of its own.
+    */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable]:not([contenteditable="false"]) {
+    -webkit-user-select: text;
+    user-select: text;
   }
   ::selection {
     @apply bg-primary/35 selection:text-primary-foreground;

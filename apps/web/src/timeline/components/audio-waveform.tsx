@@ -260,8 +260,16 @@ export function AudioWaveform({
 		}
 		lastRenderSignatureRef.current = renderSignature;
 
-		canvas.width = canvasW;
-		canvas.height = canvasH;
+		// Only when it actually changed: assigning either dimension reallocates
+		// the backing store and blanks the context, and most repaints here are
+		// a scroll, where the signature moved but the size did not. The clear
+		// below is explicit, so nothing relies on the assignment to do it.
+		if (canvas.width !== canvasW) {
+			canvas.width = canvasW;
+		}
+		if (canvas.height !== canvasH) {
+			canvas.height = canvasH;
+		}
 		canvas.style.width = `${visibleWidth}px`;
 		canvas.style.height = `${height}px`;
 		canvas.style.left = `${clipLeft}px`;

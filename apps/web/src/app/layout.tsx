@@ -1,6 +1,7 @@
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import Script from "next/script";
+import { NativeMenuSuppressor } from "../components/native-menu-suppressor";
 import { Toaster } from "../components/ui/sonner";
 import { TOOLTIP_DELAY_MS, TooltipProvider } from "../components/ui/tooltip";
 import { baseMetaData } from "./metadata";
@@ -31,6 +32,7 @@ export default function RootLayout({
 					disableTransitionOnChange={true}
 				>
 					<TooltipProvider delayDuration={TOOLTIP_DELAY_MS}>
+						<NativeMenuSuppressor />
 						<Toaster />
 						{children}
 					</TooltipProvider>

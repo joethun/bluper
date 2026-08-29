@@ -5,41 +5,57 @@ Keyframes allow element properties to change over time. The system is split into
 All paths below are relative to `apps/web/`.
 
 > The old `animation/property-registry.ts` — with per-path `valueKind` / `getValue` / `setValue` entries — no longer exists, and neither do `resolveNumberAtTime` / `resolveColorAtTime`. Property identity and read/write now live in `src/params/`, and resolution goes through a single `resolveAnimationPathValueAtTime`.
+>
+> Most of the behaviour described below has since moved into Rust
+> (`editor-core::animation`, `editor-core::params`). The TypeScript names are
+> unchanged — `src/wasm/*.ts` are thin typed wrappers — but the *list* of
+> property paths and the channel layout rules are now owned by Rust, which
+> changes where you add a new one. See step 1.
 
 ## How It Works
 
 ### Data model
 
-Every `BaseTimelineElement` has an optional `animations?: ElementAnimations` field:
+Every `BaseTimelineElement` has an optional `animations?: ElementAnimations` field. It is keyed by property path directly — there is no `channels` wrapper object:
 
 ```typescript
-interface ElementAnimations {
-    channels: Record<string, AnimationChannel | undefined>;
+export interface ElementAnimations {
+    [propertyPath: AnimationPath]: ChannelData | undefined;
 }
 ```
 
-A channel is a typed bucket of keyframes keyed by property path (e.g. `"opacity"`, `"background.color"`). Three channel types exist: `NumberAnimationChannel`, `ColorAnimationChannel`, and `DiscreteAnimationChannel`. Types live in `src/animation/types.ts`.
+A `ChannelData` is either a single channel or a `CompositeChannelData` — a `Record<string, AnimationChannel | undefined>` — for a value that decomposes into components. Two channel shapes exist, both in `src/animation/types.ts`:
+
+- `ScalarAnimationChannel` — numeric keys, each with an easing segment, optional Bézier handles and a tangent mode, plus optional before/after extrapolation.
+- `DiscreteAnimationChannel` — booleans and strings, which just hold.
+
+There is no separate colour channel. A colour is a composite of four scalar channels (`r`/`g`/`b`/`a`) sharing one easing mode, which is what keeps its components from drifting apart.
+
+> `"bindings"` and `"channels"` are reserved: an older version of the editor stored channels under those keys, so `isAnimationStorageKey` excludes them and reading one as a property path would invent keyframes.
 
 ### Property paths
 
 There are three kinds, all ultimately `AnimationPath` (a `string`):
 
-- **Built-in paths** — the literal list `ANIMATION_PROPERTY_PATHS` in `src/animation/types.ts` (`"opacity"`, `"transform.scaleX"`, `"background.paddingX"`, the `"adjust.*"` sliders, …). `AnimationPropertyPath` is derived from it, and `isAnimationPath` in `src/animation/path.ts` is the runtime guard.
+- **Built-in paths** — a fixed list (`"opacity"`, `"transform.scaleX"`, `"background.paddingX"`, the `"adjust.*"` sliders, …). It exists twice on purpose: as the `ANIMATION_PROPERTY_PATHS` const in `rust/crates/editor-core/src/animation/path.rs`, which is what the runtime checks read, and as the type-only `AnimationPropertyPath` union in `src/animation/types.ts`, which is what makes a typo a compile error. `isAnimationPath` in `src/wasm/path.ts` is the runtime guard.
 - **Graphic params** — `params.${key}`, built by `buildGraphicParamPath({ paramKey })`.
 - **Effect params** — `effects.${id}.params.${key}`, built by `buildEffectParamPath(...)`.
+
+The last two are open-ended and recognised by shape rather than by being listed, so they need no entry anywhere.
 
 ### Param registry
 
 `src/params/` defines what a property *is*. `ParamDefinition` is a union over `number | boolean | color | select | text | font`, each carrying `key`, `label`, `default`, an optional `group`, an optional `channels` layout, and — the flag that matters here — `keyframable?: boolean`.
 
-`src/params/registry.ts` holds the `DefinitionRegistry` plus the read/write helpers that replaced the old registry's `getValue`/`setValue`: `getElementParams`, `getElementParam`, `readElementParamValue`, `writeElementParamValue`.
+`src/params/registry.ts` holds the `DefinitionRegistry` plus the read/write helpers that replaced the old registry's `getValue`/`setValue`: `getElementParams`, `getBuiltInElementParams`, `getElementParam`, `readElementParamValue`, `writeElementParamValue`.
 
-Behaviour derived from a definition rather than hand-written per path:
+Behaviour derived from a definition rather than hand-written per path. All of it now lives in `editor-core::params` and is re-exported through `src/wasm/params.ts`:
 
-- `getParamChannelLayout({ param })` — how a value decomposes into channels. A colour decomposes into `r/g/b/a` with `easingMode: "shared"`, so its components cannot drift apart.
 - `getParamDefaultInterpolation({ param })`
 - `getParamNumericRange({ param })`
 - `coerceParamValue(...)` — validates and narrows a value on the way in.
+
+**How a value decomposes into channels is no longer something you can hand in.** It used to be a `ParamChannelLayout` object carrying `decompose`/`compose` closures, returned by `getParamChannelLayout`; both are gone. Closures cannot cross a wasm boundary, and the layout is a function of the param's `type` anyway, so Rust derives it — which is why `upsertPathKeyframe` takes the `ParamDefinition` itself rather than a layout. A colour still decomposes into `r/g/b/a` with a shared easing mode, so its components cannot drift apart; you just don't describe that anywhere on the TypeScript side.
 
 ### Resolver
 
@@ -63,18 +79,30 @@ Nodes in `src/services/renderer/nodes/` call the resolve functions before drawin
 
 ## Adding a New Animatable Property
 
-### 1. Register the path
+### 1. Register the path — in Rust *and* in the type
 
-For a built-in property, add it to `ANIMATION_PROPERTY_PATHS` in `src/animation/types.ts`:
+A built-in property goes in two places, and both are required.
 
-```typescript
-export const ANIMATION_PROPERTY_PATHS = [
+`rust/crates/editor-core/src/animation/path.rs` is the runtime list:
+
+```rust
+pub const ANIMATION_PROPERTY_PATHS: &[&str] = &[
     // ...existing paths
     "background.paddingX",
-] as const;
+];
 ```
 
-Graphic and effect params don't need an entry — their paths are constructed by `buildGraphicParamPath` / `buildEffectParamPath`.
+`src/animation/types.ts` is the type-only union that keeps callers honest:
+
+```typescript
+type AnimationPropertyPath =
+    // ...existing paths
+    | "background.paddingX";
+```
+
+Rebuild the renderer (`bun run wasm`, or just run anything that depends on it) so the new path reaches the webview. `apps/web/src/animation/__tests__/path-parity.test.ts` holds a hand-rolled reference copy of the list and will fail until it is updated too — that is the point of it.
+
+Graphic and effect params don't need an entry anywhere — their paths are recognised by shape and constructed by `buildGraphicParamPath` / `buildEffectParamPath`.
 
 ### 2. Make the param keyframable
 
@@ -92,7 +120,7 @@ In the param definition, set `keyframable: true` and give the numeric bounds the
 }
 ```
 
-**A built-in path has to appear in both places.** `getElementKeyframes` filters an element's channels through `isAnimationPath`, so a path that is registered as a param but missing from `ANIMATION_PROPERTY_PATHS` keyframes correctly and still draws no diamond on the clip and never snaps the playhead. This trap is called out in a comment above the `"adjust.*"` entries in `src/animation/types.ts`.
+**A built-in path has to appear in the param registry *and* in the path list.** `getElementKeyframes` filters an element's channels through `isAnimationPath`, so a path that is registered as a param but missing from the list in `path.rs` keyframes correctly and still draws no diamond on the clip and never snaps the playhead — a silent half-working feature, not an error. This trap is called out in comments in both places: above the `"adjust.*"` entries in `src/animation/types.ts`, and in the module doc of `editor-core::animation::path`.
 
 ### 3. Resolve it where it is used
 
@@ -179,7 +207,7 @@ In JSX, put a `KeyframeToggle` in the field's `beforeLabel`:
 
 ## Checklist
 
-- [ ] Built-in path added to `ANIMATION_PROPERTY_PATHS` (not needed for graphic/effect params)
+- [ ] Built-in path added to `ANIMATION_PROPERTY_PATHS` in `path.rs`, to the `AnimationPropertyPath` union in `src/animation/types.ts`, and to the reference list in `path-parity.test.ts` (none of this is needed for graphic/effect params)
 - [ ] Param definition has `keyframable: true`, plus `min`/`step` for a number
 - [ ] Value read through `resolveAnimationPathValueAtTime` with a fallback that includes defaults
 - [ ] Renderer node uses the resolved value, not the static one

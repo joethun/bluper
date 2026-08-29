@@ -74,11 +74,13 @@ const BLEND_MODE_OPTIONS: Array<{ value: BlendMode; label: string }> = [
  * how the light falls, then what is done to the grain of the picture. Each group
  * resets as a unit, so a whole pass can be thrown away without touching the rest.
  *
- * Every slider here has to reach for something none of its neighbours can. Two
- * did not, and are gone: Shine was Brightness with a softer roll-off, and Fade
- * was a black lift plus a saturation drop, which is Shadow and Saturation put
- * together. The group is called Texture rather than Effects because the tab rail
- * already has an Effects tab, and two lists under one word is one too many.
+ * Every slider here has to reach for something none of its neighbours can. Three
+ * did not, and are gone: Shine was Brightness with a softer roll-off, Fade was a
+ * black lift plus a saturation drop, which is Shadow and Saturation put
+ * together, and Highlight rolled the bright end off in a way that Brightness and
+ * Contrast between them already reach. The group is called Texture rather than
+ * Effects because the tab rail already has an Effects tab, and two lists under
+ * one word is one too many.
  */
 export const ADJUSTMENT_PARAM_GROUPS: ReadonlyArray<{
 	title: string;
@@ -90,12 +92,7 @@ export const ADJUSTMENT_PARAM_GROUPS: ReadonlyArray<{
 	},
 	{
 		title: "Lightness",
-		keys: [
-			"adjust.brightness",
-			"adjust.contrast",
-			"adjust.highlight",
-			"adjust.shadow",
-		],
+		keys: ["adjust.brightness", "adjust.contrast", "adjust.shadow"],
 	},
 	{
 		title: "Texture",
@@ -172,7 +169,6 @@ const adjustmentElementParams: ElementParamDefinition[] = [
 		label: "Contrast",
 		trackGradient: LUMINANCE_GRADIENT,
 	}),
-	adjustParam({ key: "highlight", label: "Highlight" }),
 	adjustParam({ key: "shadow", label: "Shadow" }),
 	adjustParam({ key: "sharpness", label: "Sharpness", signed: false }),
 	adjustParam({ key: "vignette", label: "Vignette", signed: false }),

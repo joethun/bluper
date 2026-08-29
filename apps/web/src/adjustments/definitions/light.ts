@@ -11,7 +11,6 @@ import {
 } from "./shared";
 
 const SHADOW_CONTRAST_RANGE = 0.5;
-const HIGHLIGHT_STRENGTH = 0.55;
 
 /**
  * Shadows move without touching the whites by pairing a contrast change with the
@@ -30,34 +29,24 @@ function shadowFilters({ amount }: { amount: number }): string[] {
 	];
 }
 
+/**
+ * The dark end of the tone range. This used to carry a Highlights slider as
+ * well, which blended the layer with itself under `screen` or `multiply`; it is
+ * gone, along with the tone-curve overlay pass that was there to serve it.
+ */
 export const lightAdjustment: AdjustmentDefinition = {
 	type: "light",
 	name: "Light",
-	description: "Recover highlights and open up shadows.",
+	description: "Open up shadows without crushing the whites.",
 	icon: ContrastIcon,
-	keywords: ["highlights", "shadows", "blacks", "whites", "tone", "light"],
-	params: [
-		signedParam({ key: "highlights", label: "Highlights" }),
-		signedParam({ key: "shadows", label: "Shadows" }),
-	],
+	keywords: ["shadows", "blacks", "tone", "light"],
+	params: [signedParam({ key: "shadows", label: "Shadows" })],
 	resolve: ({ params }) => {
 		const contribution: AdjustmentContribution = { filters: [], overlays: [] };
 
 		const shadows = readAmount({ value: params.shadows });
 		if (!isNeutral({ amount: shadows })) {
 			contribution.filters.push(...shadowFilters({ amount: shadows }));
-		}
-
-		const highlights = readAmount({ value: params.highlights });
-		if (!isNeutral({ amount: highlights })) {
-			// Blending the layer with itself: `screen` blooms the bright end,
-			// `multiply` rolls it off. Both leave near-black almost untouched, which
-			// is what keeps this from doubling as a brightness slider.
-			contribution.overlays.push({
-				kind: "toneCurve",
-				compositeOperation: highlights > 0 ? "screen" : "multiply",
-				alpha: Math.abs(highlights) * HIGHLIGHT_STRENGTH,
-			});
 		}
 
 		return contribution;

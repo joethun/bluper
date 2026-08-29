@@ -1,14 +1,39 @@
+/**
+ * Turning what the user picked into library entries.
+ *
+ * There are two routes in, and they differ in one thing: whether the app ends
+ * up holding a copy of the media.
+ *
+ * - {@link processMediaPaths} takes paths, from the native open dialog or a
+ *   drop the shell reported. Nothing is copied. The project records where the
+ *   file lives and reads it there, the way every other editor treats footage —
+ *   an import costs a probe and no disk at all, and the same card can be opened
+ *   by two projects without a second copy of it existing.
+ * - {@link processMediaAssets} takes `File` objects, which is what the
+ *   clipboard produces. Bytes with no path behind them cannot be referenced, so
+ *   these are copied into the project's media store.
+ *
+ * Both end at the same `ProcessedMediaAsset`; nothing downstream has to know
+ * which route an asset came in by.
+ */
+
 import { toast } from "sonner";
 import {
 	describeUnsupportedFormat,
 	getMediaFormatFromName,
 	getMediaTypeFromFile,
+	getMediaTypeFromName,
 } from "@/wasm/file-types";
 import { formatStorageBytes } from "@/services/storage/quota";
 import { storageService } from "@/services/storage/service";
+import {
+	tauriAllowMediaFile,
+	tauriConvertFileSrc,
+	tauriStatFile,
+} from "@/lib/tauri-runtime";
 import type { MediaAsset, MediaType } from "@/media/types";
-import { probeMediaFile } from "./probe";
-import type { MediaProbe } from "./probe";
+import { discardStagedFile, probeMediaPath, probeStagedFile } from "./probe";
+import type { MediaProbe, MediaProbeResult } from "./probe";
 import { renderThumbnailDataUrl } from "./thumbnail";
 
 export interface ProcessedMediaAsset extends Omit<MediaAsset, "id"> {}
@@ -24,6 +49,12 @@ type MediaDetails = {
 	thumbnailUrl?: string;
 };
 
+/** The last path segment, on either separator. */
+function basename({ path }: { path: string }): string {
+	const segments = path.split(/[\\/]/);
+	return segments[segments.length - 1] || path;
+}
+
 const getUnsupportedCodecDescription = ({
 	probe,
 }: {
@@ -33,9 +64,7 @@ const getUnsupportedCodecDescription = ({
 		? probe.videoCodec.toUpperCase()
 		: "this video codec";
 
-	return probe.videoCodec === "hevc"
-		? `${codecLabel} cannot be decoded in this browser, so this clip may not preview correctly. Convert it to H.264 MP4 or try importing it in Safari.`
-		: `${codecLabel} cannot be decoded in this browser, so this clip may not preview correctly. Convert it to H.264 MP4 and reimport it.`;
+	return `${codecLabel} has no decoder in this build, so this clip may not preview correctly. Convert it to H.264 MP4 and reimport it.`;
 };
 
 /**
@@ -78,17 +107,21 @@ const getStorageLimitDescription = ({
 
 	return `File size is ${fileSizeLabel}, but only ${formatStorageBytes({
 		bytes: availableBytes,
-	})} is safely available in browser storage.`;
+	})} of disk space is safely available.`;
 };
 
+/**
+ * Draws the image once to learn its size and keep a thumbnail. The URL is the
+ * caller's — an `asset:` URL for a referenced file, an object URL for bytes —
+ * and stays the caller's to revoke.
+ */
 async function generateImageThumbnail({
-	imageFile,
+	url,
 }: {
-	imageFile: File;
+	url: string;
 }): Promise<{ thumbnailUrl: string; width: number; height: number }> {
 	return new Promise((resolve, reject) => {
 		const image = new window.Image();
-		const objectUrl = URL.createObjectURL(imageFile);
 
 		image.addEventListener("load", () => {
 			try {
@@ -109,18 +142,23 @@ async function generateImageThumbnail({
 					error instanceof Error ? error : new Error("Could not render image"),
 				);
 			} finally {
-				URL.revokeObjectURL(objectUrl);
 				image.remove();
 			}
 		});
 
 		image.addEventListener("error", () => {
-			URL.revokeObjectURL(objectUrl);
 			image.remove();
 			reject(new Error("Could not load image"));
 		});
 
-		image.src = objectUrl;
+		// `asset:` URLs are a different origin from the page, so without this
+		// the canvas `drawImage` is treated as cross-origin and `toDataURL`
+		// throws "The operation is insecure" — which the catch below turns
+		// into the "no decoder" toast. The asset protocol already sends the
+		// matching `Access-Control-Allow-Origin`, so the request succeeds and
+		// the image lands CORS-clean.
+		image.crossOrigin = "anonymous";
+		image.src = url;
 	});
 }
 
@@ -129,53 +167,79 @@ async function generateImageThumbnail({
  * all depend on the platform's own decoders, so whether they load is a property
  * of the machine rather than of the file.
  *
- * Null means the file was reported and should be skipped: an image the browser
+ * Null means the file was reported and should be skipped: an image the WebView
  * won't decode is one nothing downstream can draw either, and a library entry
  * that renders nothing is worse than an honest refusal.
  */
 async function readImageDetails({
-	file,
+	url,
+	name,
 }: {
-	file: File;
+	url: string;
+	name: string;
 }): Promise<MediaDetails | null> {
 	try {
 		const { thumbnailUrl, width, height } = await generateImageThumbnail({
-			imageFile: file,
+			url,
 		});
 		return { type: "image", thumbnailUrl, width, height };
 	} catch (error) {
-		const label = getMediaFormatFromName({ name: file.name })?.label;
-		toast.error(`Can't read ${file.name}`, {
-			description: label
-				? `${label} images aren't decoded by this browser. Convert it to PNG or JPEG and reimport it.`
-				: error instanceof Error
-					? error.message
-					: "The image could not be decoded.",
+		const label = getMediaFormatFromName({ name })?.label;
+		const reason =
+			error instanceof Error && error.message !== "Could not load image"
+				? error.message
+				: null;
+		toast.error(`Can't read ${name}`, {
+			description: reason ?? getImageUnsupportedDescription({ label }),
 		});
 		return null;
 	}
 }
 
 /**
+ * Why an image the app recognised still couldn't be loaded. Universal formats
+ * (PNG, JPEG, GIF, WebP, BMP) decode on every WebView the editor runs on, so a
+ * failure to load them isn't a missing decoder — it is something else, and the
+ * catch handler surfaces that other cause by name. The message below is the
+ * fallback for the formats the WebView genuinely may refuse (HEIC, TIFF,
+ * JPEG XL).
+ */
+const getImageUnsupportedDescription = ({
+	label,
+}: {
+	label: string | undefined;
+}): string => {
+	if (!label) {
+		return "The image could not be decoded.";
+	}
+	return `${label} images may not be supported on this system. Convert it to PNG or JPEG and reimport it.`;
+};
+
+/**
  * Reads whatever a file turns out to hold. The declared kind is only a starting
  * point — an audio-only MP4 imports as audio, and a `.mkv` the OS had no name
  * for is read exactly like an `.mp4`.
+ *
+ * The probe has already run: each route in has its own way of reaching a path,
+ * and what the probe said is the only part they share.
  */
 async function readTimedMediaDetails({
-	file,
+	result,
+	name,
+	url,
 	declaredType,
 }: {
-	file: File;
+	result: MediaProbeResult;
+	name: string;
+	url: string;
 	declaredType: Extract<MediaType, "video" | "audio">;
 }): Promise<MediaDetails | null> {
-	const result = await probeMediaFile({ file });
-
 	if (result.status === "unreadable") {
-		// Audio has a second chance: `decodeAudioData` runs the platform's own
-		// decoders rather than ffmpeg's, and reads a container the shell
-		// declined — the same fallback playback already relies on.
+		// Audio has a second chance: the WebView's own decoders are not ffmpeg's
+		// and read a container the shell declined — the same fallback playback
+		// already relies on.
 		if (declaredType === "audio") {
-			const duration = await getElementMediaDuration({ file }).catch(() => null);
+			const duration = await getElementMediaDuration({ url }).catch(() => null);
 			if (duration !== null) {
 				return { type: "audio", duration, hasAudio: true };
 			}
@@ -183,9 +247,9 @@ async function readTimedMediaDetails({
 
 		// Frames only ever come from the shell's demuxer, so a container it
 		// refuses is one the timeline could only show as nothing at all.
-		toast.error(`Can't read ${file.name}`, {
+		toast.error(`Can't read ${name}`, {
 			description: getUnreadableDescription({
-				name: file.name,
+				name,
 				reason: result.reason,
 			}),
 		});
@@ -203,7 +267,7 @@ async function readTimedMediaDetails({
 	}
 
 	if (!probe.canDecodeVideo) {
-		toast.error(`Can't preview ${file.name}`, {
+		toast.error(`Can't preview ${name}`, {
 			description: getUnsupportedCodecDescription({ probe }),
 		});
 	}
@@ -219,6 +283,97 @@ async function readTimedMediaDetails({
 	};
 }
 
+/**
+ * Imports files where they already are.
+ *
+ * Nothing is copied and free space is never consulted, because nothing is
+ * written: the project keeps the path and reads through it. Importing a 40 GB
+ * card dump costs one probe.
+ */
+export async function processMediaPaths({
+	paths,
+	onProgress,
+}: {
+	paths: string[];
+	onProgress?: ({ progress }: { progress: number }) => void;
+}): Promise<ProcessedMediaAsset[]> {
+	const processedAssets: ProcessedMediaAsset[] = [];
+
+	const total = paths.length;
+	let completed = 0;
+
+	for (const path of paths) {
+		const name = basename({ path });
+		const fileType = getMediaTypeFromName({ name });
+
+		if (!fileType) {
+			toast.error(`Unsupported file type: ${name}`);
+			continue;
+		}
+
+		try {
+			const stat = await tauriStatFile({ path });
+			if (!stat) {
+				toast.error(`Can't read ${name}`, {
+					description: "There is no file at that location.",
+				});
+				continue;
+			}
+
+			// Grant before reading. The canonical path this returns is what the
+			// `asset:` protocol matches a request against, so it is also the path
+			// worth recording — a relink later compares against the same spelling.
+			const allowedPath = await tauriAllowMediaFile({ path });
+			const url = tauriConvertFileSrc(allowedPath);
+
+			const details =
+				fileType === "image"
+					? await readImageDetails({ url, name })
+					: await readTimedMediaDetails({
+							result: await probeMediaPath({ path: allowedPath }),
+							name,
+							url,
+							declaredType: fileType,
+						});
+
+			if (!details) continue;
+
+			processedAssets.push({
+				name,
+				type: details.type,
+				sourcePath: allowedPath,
+				path: allowedPath,
+				url,
+				size: stat.size,
+				lastModified: stat.lastModified,
+				thumbnailUrl: details.thumbnailUrl,
+				duration: details.duration,
+				width: details.width,
+				height: details.height,
+				fps: details.fps,
+				hasAudio: details.hasAudio,
+			});
+
+			completed += 1;
+			onProgress?.({ progress: Math.round((completed / total) * 100) });
+		} catch (error) {
+			console.error("Error processing path:", path, error);
+			toast.error(`Failed to process ${name}`);
+		}
+	}
+
+	return processedAssets;
+}
+
+/**
+ * Imports bytes the app has to keep a copy of.
+ *
+ * Only reached by media with no path behind it — the clipboard, and a drop from
+ * an app that handed over bytes rather than a file. All of it is written into
+ * the project's media store, so free space is checked first, and the probe's
+ * scratch file is carried forward to be moved into place rather than having the
+ * same bytes written a second time.
+ */
 export async function processMediaAssets({
 	files,
 	onProgress,
@@ -245,7 +400,7 @@ export async function processMediaAssets({
 		});
 
 		if (!storageCheck.canStore) {
-			toast.error(`Not enough browser storage for ${file.name}`, {
+			toast.error(`Not enough disk space for ${file.name}`, {
 				description: getStorageLimitDescription({
 					fileSize: file.size,
 					availableBytes: storageCheck.availableBytes,
@@ -255,18 +410,30 @@ export async function processMediaAssets({
 		}
 
 		const url = URL.createObjectURL(file);
+		let stagedPath: string | null = null;
 
 		try {
-			const details =
-				fileType === "image"
-					? await readImageDetails({ file })
-					: await readTimedMediaDetails({ file, declaredType: fileType });
+			let details: MediaDetails | null;
+
+			if (fileType === "image") {
+				details = await readImageDetails({ url, name: file.name });
+			} else {
+				const staged = await probeStagedFile({ file });
+				stagedPath = staged.stagedPath;
+				details = await readTimedMediaDetails({
+					result: staged.result,
+					name: file.name,
+					url,
+					declaredType: fileType,
+				});
+			}
 
 			// Null means nothing here could read the file, and it has already said
 			// so. Adding it anyway would put an entry in the library that draws
 			// nothing and exports nothing.
 			if (!details) {
 				URL.revokeObjectURL(url);
+				await discardStagedFile({ stagedPath });
 				continue;
 			}
 
@@ -275,6 +442,7 @@ export async function processMediaAssets({
 				type: details.type,
 				file,
 				url,
+				stagedPath: stagedPath ?? undefined,
 				thumbnailUrl: details.thumbnailUrl,
 				duration: details.duration,
 				width: details.width,
@@ -294,6 +462,7 @@ export async function processMediaAssets({
 			console.error("Error processing file:", file.name, error);
 			toast.error(`Failed to process ${file.name}`);
 			URL.revokeObjectURL(url);
+			await discardStagedFile({ stagedPath });
 		}
 	}
 
@@ -301,16 +470,14 @@ export async function processMediaAssets({
 }
 
 /**
- * Duration from the platform's own media pipeline. Only reached when mediabunny
+ * Duration from the WebView's own media pipeline. Only reached when the shell
  * has already refused the file, so this is the last thing that might know.
  */
-const getElementMediaDuration = ({ file }: { file: File }): Promise<number> => {
+const getElementMediaDuration = ({ url }: { url: string }): Promise<number> => {
 	return new Promise((resolve, reject) => {
 		const element = document.createElement("audio");
-		const objectUrl = URL.createObjectURL(file);
 
 		const cleanUp = () => {
-			URL.revokeObjectURL(objectUrl);
 			element.remove();
 		};
 
@@ -329,7 +496,7 @@ const getElementMediaDuration = ({ file }: { file: File }): Promise<number> => {
 			reject(new Error("Could not load media"));
 		});
 
-		element.src = objectUrl;
+		element.src = url;
 		element.load();
 	});
 };
