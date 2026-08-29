@@ -5,7 +5,6 @@ import type { EditorCore } from "@/core";
 import { useEditor } from "@/editor/use-editor";
 import type { BookmarkDragState } from "../hooks/use-bookmark-drag";
 import { DEFAULT_TIMELINE_BOOKMARK_COLOR } from "@/timeline/components/theme";
-import { TIMELINE_BOOKMARK_ROW_HEIGHT_PX } from "@/timeline/components/layout";
 import { DEFAULT_FPS } from "@/fps/defaults";
 import { Trash2Icon, UndoIcon } from "lucide-react";
 import type { Bookmark } from "@/timeline";
@@ -52,67 +51,34 @@ function seekToBookmarkTime({
 	editor.playback.seek({ time: snappedTime });
 }
 
-interface TimelineBookmarksRowProps {
+interface TimelineBookmarksProps {
 	zoomLevel: number;
-	dynamicTimelineWidth: number;
 	dragState: BookmarkDragState;
 	onBookmarkMouseDown: (params: {
 		event: React.MouseEvent;
 		bookmark: Bookmark;
 	}) => void;
-	handleWheel: (event: React.WheelEvent) => void;
-	handleTimelineContentClick: (event: React.MouseEvent) => void;
-	handleRulerTrackingMouseDown: (event: React.MouseEvent) => void;
-	handleRulerMouseDown: (event: React.MouseEvent) => void;
 }
 
-export function TimelineBookmarksRow({
+export function TimelineBookmarks({
 	zoomLevel,
-	dynamicTimelineWidth,
 	dragState,
 	onBookmarkMouseDown,
-	handleWheel,
-	handleTimelineContentClick,
-	handleRulerTrackingMouseDown,
-	handleRulerMouseDown,
-}: TimelineBookmarksRowProps) {
+}: TimelineBookmarksProps) {
 	const bookmarks = useEditor((e) => e.scenes.getActiveScene().bookmarks);
 
 	return (
-		<div
-			className="relative flex-1 overflow-hidden select-none"
-			style={{ height: TIMELINE_BOOKMARK_ROW_HEIGHT_PX }}
-		>
-			<button
-				className="relative w-full cursor-default select-none border-0 bg-transparent p-0"
-				style={{
-					height: TIMELINE_BOOKMARK_ROW_HEIGHT_PX,
-					width: `${dynamicTimelineWidth}px`,
-				}}
-				aria-label="Timeline ruler"
-				type="button"
-				onWheel={handleWheel}
-				onClick={(event) => {
-					if (!event.currentTarget.contains(event.target as Node)) return;
-					handleTimelineContentClick(event);
-				}}
-				onMouseDown={(event) => {
-					if (!event.currentTarget.contains(event.target as Node)) return;
-					handleRulerMouseDown(event);
-					handleRulerTrackingMouseDown(event);
-				}}
-			>
-				{bookmarks.map((bookmark) => (
-					<TimelineBookmark
-						key={`bookmark-${bookmark.time}`}
-						bookmark={bookmark}
-						zoomLevel={zoomLevel}
-						dragState={dragState}
-						onBookmarkMouseDown={onBookmarkMouseDown}
-					/>
-				))}
-			</button>
-		</div>
+		<>
+			{bookmarks.map((bookmark) => (
+				<TimelineBookmark
+					key={`bookmark-${bookmark.time}`}
+					bookmark={bookmark}
+					zoomLevel={zoomLevel}
+					dragState={dragState}
+					onBookmarkMouseDown={onBookmarkMouseDown}
+				/>
+			))}
+		</>
 	);
 }
 

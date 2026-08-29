@@ -12,4 +12,4 @@ export {
 	getBookmarkPreviewOverlaySource,
 } from "./preview-overlay-source";
 export { useBookmarkDrag } from "./hooks/use-bookmark-drag";
-export { TimelineBookmarksRow } from "./components/bookmarks";
+export { TimelineBookmarks } from "./components/bookmarks";

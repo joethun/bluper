@@ -7,7 +7,6 @@ import type {
 	SelectedMaskPointSelection,
 } from "@/selection/editor-selection";
 import type { ElementRef } from "@/timeline/types";
-import { expandToGroups } from "@/wasm/timeline";
 
 export class SelectionManager {
 	private selectedElements: ElementRef[] = [];
@@ -54,24 +53,6 @@ export class SelectionManager {
 			this.selectedElements = liveElements;
 			this.notify();
 		}
-	}
-
-	/**
-	 * A group is one object as far as selection is concerned, so anything that
-	 * lands on a member lands on all of them. Done here rather than at each call
-	 * site so every route into a selection — timeline click, box select, the
-	 * preview, a keyboard shortcut — behaves the same way.
-	 */
-	private expandSelection({
-		elements,
-	}: {
-		elements: ElementRef[];
-	}): ElementRef[] {
-		const tracks = this.editor.scenes.getActiveSceneOrNull()?.tracks;
-		if (!tracks || elements.length === 0) {
-			return elements;
-		}
-		return expandToGroups({ tracks, elements });
 	}
 
 	getSelectedElements(): ElementRef[] {

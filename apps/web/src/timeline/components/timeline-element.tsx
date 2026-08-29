@@ -280,10 +280,14 @@ export const TimelineElement = memo(function TimelineElement({
 		zoomLevel,
 	});
 	const timelinePixelsPerSecond = getTimelinePixelsPerSecond({ zoomLevel });
-	const elementLeft = timelineTimeToSnappedPixels({
-		time: displayedStartTime,
-		zoomLevel,
-	});
+	const elementLeft =
+		isDragging && isBeingDragged
+			? dragView.anchorLeftPx +
+				(dragView.memberPixelOffsets.get(element.id) ?? 0)
+			: timelineTimeToSnappedPixels({
+					time: displayedStartTime,
+					zoomLevel,
+				});
 	const keyframeIndicators = isSelected
 		? getKeyframeIndicators({
 				keyframes: getElementKeyframes({ animations: element.animations }),

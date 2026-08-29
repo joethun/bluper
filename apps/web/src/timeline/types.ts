@@ -391,7 +391,23 @@ export type ElementDragView =
 			readonly kind: "dragging";
 			readonly anchorElementId: string;
 			readonly trackId: string;
+			/**
+			 * Each member's time offset from the anchor. Used for logical-time
+			 * math (e.g. keyframe indicator positions) — not for pixel layout.
+			 */
 			readonly memberTimeOffsets: ReadonlyMap<string, MediaTime>;
+			/**
+			 * Each member's pixel offset from the anchor, captured once at
+			 * drag start from the resting snapped positions. Holding the
+			 * gap in pixels instead of recomputing it each frame keeps the
+			 * selection moving as one solid mass: re-snapping
+			 * `(currentTime + timeOffset_i)` independently per member makes
+			 * the relative pixel gap stutter by ±1/dpr CSS pixels as the
+			 * anchor crosses rounding boundaries.
+			 */
+			readonly memberPixelOffsets: ReadonlyMap<string, number>;
+			/** Anchor's snapped pixel X, recomputed each frame from `currentTime`. */
+			readonly anchorLeftPx: number;
 			readonly startMouseX: number;
 			readonly startMouseY: number;
 			readonly startElementTime: MediaTime;

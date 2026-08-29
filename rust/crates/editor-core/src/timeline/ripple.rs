@@ -342,7 +342,6 @@ mod tests {
             source_duration: None,
             animations: None,
             params: HashMap::new(),
-            group_id: None,
             kind: ElementKind::Text {
                 hidden: None,
                 fade: None,

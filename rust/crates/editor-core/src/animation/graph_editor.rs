@@ -1039,7 +1039,6 @@ mod tests {
             source_duration: None,
             animations,
             params: HashMap::from([("opacity".to_string(), ParamValue::Number(1.0))]),
-            group_id: None,
             kind: ElementKind::Text {
                 hidden: None,
                 fade: None,

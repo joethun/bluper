@@ -5,7 +5,6 @@ mod drop_target;
 mod gaps;
 mod group_move;
 mod group_resize;
-mod grouping;
 mod pixel_utils;
 mod placement;
 mod ripple;
@@ -42,10 +41,6 @@ pub use drop_target::{
 pub use gaps::{
     CloseAllGapsOptions, CloseGapOptions, FindGapAtTimeOptions, FoundGap, FoundGaps,
     TimelineGap, TrackOptions, close_all_gaps, close_gap, find_gap_at_time, find_gaps,
-};
-pub use grouping::{
-    ElementRef, ElementRefs, ExpandToGroupsOptions, RemoveWithGroupsOptions, expand_to_groups,
-    remove_with_groups,
 };
 pub use snapping::{
     BASE_TIMELINE_PIXELS_PER_SECOND, GestureSnapPointsOptions, ResolveSnapOptions, SnapPoint,

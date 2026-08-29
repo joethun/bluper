@@ -30,8 +30,10 @@ import type { Effect, EffectDefinition, EffectGroup } from "@/effects/types";
 import type { ParamValue, ParamValues } from "@/params";
 import { effectPreviewService } from "@/services/renderer/effect-preview";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
+import { useTimelineHasMedia } from "@/timeline/hooks/use-timeline-has-media";
 import type { EffectElement, TimelineElement, EffectableElement } from "@/timeline";
 import { cn } from "@/utils/ui";
+import { NoMediaThumbnail } from "@/components/no-media-thumbnail";
 
 /**
  * The Effects tab, laid out the way the Adjust tab is: what is on the clip sits at
@@ -406,6 +408,7 @@ function EffectTile({
 	isApplied: boolean;
 	onClick: () => void;
 }) {
+	const hasMedia = useTimelineHasMedia();
 	return (
 		<button
 			type="button"
@@ -416,16 +419,21 @@ function EffectTile({
 		>
 			<div
 				className={cn(
-					"bg-accent relative aspect-[5/4] w-full overflow-hidden rounded-sm border transition-colors",
+					"relative aspect-[5/4] w-full overflow-hidden rounded-sm border transition-colors",
+					hasMedia ? "bg-accent" : "bg-muted/70",
 					isApplied
 						? "border-primary ring-primary ring-1"
 						: "group-hover:border-muted-foreground/60",
 				)}
 			>
-				<TilePreview
-					effectType={definition.type}
-					sampleImageUrl={sampleImageUrl}
-				/>
+				{hasMedia ? (
+					<TilePreview
+						effectType={definition.type}
+						sampleImageUrl={sampleImageUrl}
+					/>
+				) : (
+					<NoMediaThumbnail iconClassName="size-10" />
+				)}
 				{isApplied && (
 					<span className="bg-primary text-primary-foreground absolute top-1 right-1 flex size-4 items-center justify-center rounded-sm">
 						<CheckIcon className="size-3" />

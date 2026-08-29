@@ -1,6 +1,5 @@
 import { useCallback } from "react";
 import { useEditor } from "@/editor/use-editor";
-import { removeWithGroups } from "@/wasm/timeline";
 import type { ElementRef } from "@/timeline/types";
 
 export function useElementSelection() {
@@ -40,25 +39,13 @@ export function useElementSelection() {
 		[selectedElements, editor],
 	);
 
-	// Deselecting one member of a group has to take the whole group with it. The
-	// selection manager pulls groups back in on every set, so removing a lone
-	// member would simply be undone by its own siblings.
 	const removeElementFromSelection = useCallback(
 		({ trackId, elementId }: ElementRef) => {
-			const tracks = editor.scenes.getActiveSceneOrNull()?.tracks;
 			editor.selection.setSelectedElements({
-				elements: tracks
-					? removeWithGroups({
-							tracks,
-							elements: selectedElements,
-							remove: [{ trackId, elementId }],
-						})
-					: selectedElements.filter(
-							(element) =>
-								!(
-									element.trackId === trackId && element.elementId === elementId
-								),
-						),
+				elements: selectedElements.filter(
+					(element) =>
+						!(element.trackId === trackId && element.elementId === elementId),
+				),
 			});
 		},
 		[selectedElements, editor],

@@ -8,7 +8,6 @@ import type { SceneTracks, TimelineElement } from "@/timeline";
 import type { ElementClipboardItem } from "@/clipboard";
 import { generateUUID } from "@/utils/id";
 import { applyPlacement, resolveTrackPlacement } from "@/timeline/placement";
-import { createGroupId } from "@/wasm/timeline";
 import { cloneAnimations } from "@/animation";
 import {
 	addMediaTime,
@@ -55,17 +54,12 @@ export class PasteCommand extends Command {
 		const itemsByTrackId = groupClipboardItemsByTrackId({
 			clipboardItems: this.clipboardItems,
 		});
-		// Pasted copies form groups of their own rather than rejoining the ones
-		// they were cut from. Shared across tracks so a group whose members sat on
-		// different tracks arrives as one group again.
-		const groupIdRemap = new Map<string, string>();
 
 		for (const [trackId, items] of itemsByTrackId) {
 			const elementsToAdd = buildPastedElements({
 				items,
 				minStart,
 				time: this.time,
-				groupIdRemap,
 			});
 
 			if (elementsToAdd.length === 0) {
@@ -149,12 +143,10 @@ function buildPastedElements({
 	items,
 	minStart,
 	time,
-	groupIdRemap,
 }: {
 	items: ElementClipboardItem[];
 	minStart: MediaTime;
 	time: MediaTime;
-	groupIdRemap: Map<string, string>;
 }): TimelineElement[] {
 	const elementsToAdd: TimelineElement[] = [];
 
@@ -173,10 +165,6 @@ function buildPastedElements({
 			...item.element,
 			id: newElementId,
 			startTime,
-			groupId: remapGroupId({
-				groupId: item.element.groupId,
-				remap: groupIdRemap,
-			}),
 			animations: cloneAnimations({
 				animations: item.element.animations,
 				shouldRegenerateKeyframeIds: true,
@@ -185,25 +173,4 @@ function buildPastedElements({
 	}
 
 	return elementsToAdd;
-}
-
-function remapGroupId({
-	groupId,
-	remap,
-}: {
-	groupId: string | undefined;
-	remap: Map<string, string>;
-}): string | undefined {
-	if (!groupId) {
-		return undefined;
-	}
-
-	const existing = remap.get(groupId);
-	if (existing) {
-		return existing;
-	}
-
-	const nextGroupId = createGroupId();
-	remap.set(groupId, nextGroupId);
-	return nextGroupId;
 }

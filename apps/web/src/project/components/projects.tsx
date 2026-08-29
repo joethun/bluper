@@ -48,6 +48,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ShortcutsDialog } from "@/actions/components/shortcuts-dialog";
+import { NoMediaThumbnail } from "@/components/no-media-thumbnail";
 import { useEditor } from "@/editor/use-editor";
 import { DeleteProjectDialog } from "@/project/components/delete-project-dialog";
 import { ProjectInfoDialog } from "@/project/components/project-info-dialog";
@@ -733,11 +734,7 @@ function ProjectThumbnail({
 					className="object-cover transition-transform duration-300 group-hover:scale-[1.03]"
 				/>
 			) : (
-				<div className="flex size-full items-center justify-center">
-					<VideoIcon
-						className={cn("text-muted-foreground/60 shrink-0", iconClassName)}
-					/>
-				</div>
+				<NoMediaThumbnail iconClassName={iconClassName} />
 			)}
 		</div>
 	);
@@ -1133,7 +1130,7 @@ function EmptyState() {
 				<p className="text-muted-foreground text-sm">
 					{isSearchEmptyState
 						? `Nothing matched “${searchQuery}”. Try a different name or clear the search.`
-						: "Create your first project to import media, edit, and export — all privately, in your browser."}
+						: "Create your first project to import media, edit, and export"}
 				</p>
 			</div>
 

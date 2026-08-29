@@ -82,10 +82,7 @@ import { useElementSelection } from "@/timeline/hooks/element/use-element-select
 import { useTimelineSeek } from "@/timeline/hooks/use-timeline-seek";
 import { useTimelineDragDrop } from "@/timeline/hooks/use-timeline-drag-drop";
 import { TimelineRuler } from "./timeline-ruler";
-import {
-	TimelineBookmarksRow,
-	useBookmarkDrag,
-} from "@/timeline/bookmarks/index";
+import { useBookmarkDrag } from "@/timeline/bookmarks/index";
 import { useEdgeAutoScroll } from "@/timeline/hooks/use-edge-auto-scroll";
 import { useInitialScrollBottom } from "@/timeline/hooks/use-initial-scroll-bottom";
 import { useTimelineResize } from "@/timeline/hooks/use-timeline-resize";
@@ -496,16 +493,8 @@ export function Timeline() {
 								handleTimelineContentClick={handleRulerClick}
 								handleRulerTrackingMouseDown={handleRulerMouseDown}
 								handleRulerMouseDown={handlePlayheadRulerMouseDown}
-							/>
-							<TimelineBookmarksRow
-								zoomLevel={zoomLevel}
-								dynamicTimelineWidth={dynamicTimelineWidth}
-								dragState={bookmarkDragState}
+								bookmarkDragState={bookmarkDragState}
 								onBookmarkMouseDown={handleBookmarkMouseDown}
-								handleWheel={handleWheel}
-								handleTimelineContentClick={handleRulerClick}
-								handleRulerTrackingMouseDown={handleRulerMouseDown}
-								handleRulerMouseDown={handlePlayheadRulerMouseDown}
 							/>
 						</div>
 					</div>

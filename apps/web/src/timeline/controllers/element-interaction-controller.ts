@@ -8,7 +8,9 @@ import {
 	type MoveGroup,
 } from "@/timeline/group-move";
 import { BASE_TIMELINE_PIXELS_PER_SECOND } from "@/timeline/scale";
+import { timelineTimeToSnappedPixels } from "@/timeline/pixel-utils";
 import {
+	addMediaTime,
 	maxMediaTime,
 	type MediaTime,
 	mediaTime,
@@ -101,6 +103,17 @@ interface MousedownSnapshot {
 
 interface DragProgress {
 	moveGroup: MoveGroup;
+	/**
+	 * Each member's pixel offset from the anchor, computed once at drag
+	 * start from the resting snapped positions. The renderer adds this to
+	 * the per-frame anchor pixel X (`anchorLeftPx`) instead of re-snapping
+	 * each member's `(currentTime + timeOffset)` independently — that
+	 * independent snap makes the relative pixel gap stutter ±1/dpr CSS
+	 * pixels as the anchor crosses rounding boundaries the members don't
+	 * share. Holding the gap constant makes the selection move as one
+	 * solid mass.
+	 */
+	memberPixelOffsets: ReadonlyMap<string, number>;
 	// Pre-minted per member so the identity of any "new track" created by
 	// this drag stays stable across mousemove-driven drop-target recomputes.
 	// `resolveGroupMoveForDrop` runs every mousemove and emits a
@@ -137,6 +150,42 @@ type Session =
 const IDLE_VIEW: ElementDragView = { kind: "idle" };
 
 // --- Pure helpers ---
+
+/**
+ * Each member's pixel offset from the anchor, measured from the resting
+ * snapped positions. The anchor itself maps to `0`; other members map to
+ * `snapped(anchorRestTime + memberTimeOffset) - snapped(anchorRestTime)`.
+ *
+ * Captured once at drag start so the per-frame render can compose
+ * `anchorLeftPx + offset` and keep the relative pixel gap constant.
+ * Recomputing per-frame from `(currentTime + timeOffset)` instead would
+ * make the gap stutter ±1/dpr CSS pixels as the anchor crosses rounding
+ * boundaries that the members don't share — `snap(a + b) - snap(a)` is
+ * not generally equal to `snap(b)`.
+ */
+function buildMemberPixelOffsets({
+	moveGroup,
+	anchorRestTime,
+	zoomLevel,
+}: {
+	moveGroup: MoveGroup;
+	anchorRestTime: MediaTime;
+	zoomLevel: number;
+}): ReadonlyMap<string, number> {
+	const anchorLeft = timelineTimeToSnappedPixels({
+		time: anchorRestTime,
+		zoomLevel,
+	});
+	const offsets = new Map<string, number>();
+	for (const member of moveGroup.members) {
+		const memberLeft = timelineTimeToSnappedPixels({
+			time: addMediaTime({ a: anchorRestTime, b: member.timeOffset }),
+			zoomLevel,
+		});
+		offsets.set(member.elementId, memberLeft - anchorLeft);
+	}
+	return offsets;
+}
 
 function pixelToClickOffsetTime({
 	clientX,
@@ -330,11 +379,17 @@ export class ElementInteractionController {
 		for (const member of drag.moveGroup.members) {
 			memberTimeOffsets.set(member.elementId, member.timeOffset);
 		}
+		const anchorLeftPx = timelineTimeToSnappedPixels({
+			time: drag.currentTime,
+			zoomLevel: this.deps.viewport.getZoomLevel(),
+		});
 		return {
 			kind: "dragging",
 			anchorElementId: mousedown.elementId,
 			trackId: mousedown.trackId,
 			memberTimeOffsets,
+			memberPixelOffsets: drag.memberPixelOffsets,
+			anchorLeftPx,
 			startMouseX: mousedown.origin.x,
 			startMouseY: mousedown.origin.y,
 			startElementTime: mousedown.startElementTime,
@@ -626,8 +681,20 @@ export class ElementInteractionController {
 			this.deps.selection.select(anchorRef);
 		}
 
+		// Each member's pixel offset from the anchor, computed from the
+		// resting snapped positions. Held constant for the whole gesture so
+		// the renderer can do `anchorLeftPx + offset` instead of
+		// re-snapping each member's `(currentTime + timeOffset)` — see the
+		// field doc on `DragProgress.memberPixelOffsets`.
+		const memberPixelOffsets = buildMemberPixelOffsets({
+			moveGroup,
+			anchorRestTime: mousedown.startElementTime,
+			zoomLevel,
+		});
+
 		const drag: DragProgress = {
 			moveGroup,
+			memberPixelOffsets,
 			reservedNewTrackIds: moveGroup.members.map(() => generateUUID()),
 			snapPoints: null,
 			playheadTime: this.deps.playback.getCurrentTime(),

@@ -2,13 +2,10 @@ import {
 	applyElementUpdate as _applyElementUpdate,
 	closeAllGaps as _closeAllGaps,
 	closeGap as _closeGap,
-	expandToGroups as _expandToGroups,
 	findGapAtTime as _findGapAtTime,
 	findGaps as _findGaps,
-	removeWithGroups as _removeWithGroups,
 } from "bluper-wasm";
 import type {
-	ElementRef,
 	SceneTracks,
 	TimelineElement,
 	TimelineTrack,
@@ -119,50 +116,4 @@ export function closeAllGaps({
 	return _closeAllGaps(
 		wasmArgs({ args: { tracks, track } }),
 	) as unknown as SceneTracks;
-}
-
-// --- Grouping ---------------------------------------------------------------
-
-/**
- * Group membership is a shared id on each element rather than a container, so a
- * group has no position in the track order and an element leaves one by losing
- * the id.
- */
-export function createGroupId(): string {
-	// Stays here: minting an id needs randomness, which is not worth wiring into
-	// a wasm build to produce an opaque string.
-	return `group-${crypto.randomUUID()}`;
-}
-
-export function isGroupedElement({
-	element,
-}: {
-	element: TimelineElement;
-}): boolean {
-	return typeof element.groupId === "string" && element.groupId.length > 0;
-}
-
-/** Pulls in the rest of every group the given elements belong to. */
-export function expandToGroups({
-	tracks,
-	elements,
-}: {
-	tracks: SceneTracks;
-	elements: readonly ElementRef[];
-}): ElementRef[] {
-	return _expandToGroups(wasmArgs({ args: { tracks, elements } })).elements;
-}
-
-/** Drops the given elements *and* the rest of their groups. */
-export function removeWithGroups({
-	tracks,
-	elements,
-	remove,
-}: {
-	tracks: SceneTracks;
-	elements: readonly ElementRef[];
-	remove: readonly ElementRef[];
-}): ElementRef[] {
-	return _removeWithGroups(wasmArgs({ args: { tracks, elements, remove } }))
-		.elements;
 }

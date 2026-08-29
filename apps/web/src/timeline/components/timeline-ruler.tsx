@@ -8,6 +8,9 @@ import { useEditor } from "@/editor/use-editor";
 import { getRulerConfig, shouldShowLabel } from "@/timeline/ruler-utils";
 import { useScrollPosition } from "@/timeline/hooks/use-scroll-position";
 import { TimelineTick } from "./timeline-tick";
+import { TimelineBookmarks } from "@/timeline/bookmarks/components/bookmarks";
+import type { Bookmark } from "@/timeline";
+import type { BookmarkDragState } from "@/timeline/bookmarks/hooks/use-bookmark-drag";
 
 interface TimelineRulerProps {
 	zoomLevel: number;
@@ -18,6 +21,11 @@ interface TimelineRulerProps {
 	handleTimelineContentClick: (e: React.MouseEvent) => void;
 	handleRulerTrackingMouseDown: (e: React.MouseEvent) => void;
 	handleRulerMouseDown: (e: React.MouseEvent) => void;
+	bookmarkDragState: BookmarkDragState;
+	onBookmarkMouseDown: (params: {
+		event: React.MouseEvent;
+		bookmark: Bookmark;
+	}) => void;
 }
 
 export function TimelineRuler({
@@ -29,6 +37,8 @@ export function TimelineRuler({
 	handleTimelineContentClick,
 	handleRulerTrackingMouseDown,
 	handleRulerMouseDown,
+	bookmarkDragState,
+	onBookmarkMouseDown,
 }: TimelineRulerProps) {
 	const durationTicks = useEditor((e) => e.timeline.getTotalDuration());
 	const durationSeconds = mediaTimeToSeconds({ time: durationTicks });
@@ -129,6 +139,11 @@ export function TimelineRuler({
 				onMouseDown={handleRulerMouseDown}
 			>
 				{timelineTicks}
+				<TimelineBookmarks
+					zoomLevel={zoomLevel}
+					dragState={bookmarkDragState}
+					onBookmarkMouseDown={onBookmarkMouseDown}
+				/>
 			</div>
 		</div>
 	);

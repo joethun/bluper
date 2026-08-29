@@ -22,6 +22,7 @@ import { CURRENT_PROJECT_VERSION } from "@/services/storage/version";
 import { loadFonts } from "@/fonts/google-fonts";
 import { DEFAULTS } from "@/timeline/defaults";
 import { getElementFontFamilies } from "@/timeline/element-utils";
+import { sceneHasMedia } from "@/timeline/hooks/use-timeline-has-media";
 import { getRaisedProjectFpsForImportedMedia } from "@/fps/utils";
 import type { MediaAsset } from "@/media/types";
 
@@ -128,15 +129,17 @@ export class ProjectManager {
 				],
 			});
 
-			if (!project.metadata.thumbnail) {
-				try {
-					const didUpdateThumbnail = await this.updateThumbnailFromTimeline();
-					if (didUpdateThumbnail) {
-						await this.saveCurrentProject();
-					}
-				} catch (error) {
-					console.error("Failed to generate project thumbnail:", error);
+			// Refresh the thumbnail on every load. Generating it is one canvas render
+			// and the cost of skipping it was a project whose only footage had been
+			// removed keeping its old picture on the projects page — the placeholder
+			// needs the metadata cleared to surface.
+			try {
+				const didUpdateThumbnail = await this.updateThumbnailFromTimeline();
+				if (didUpdateThumbnail) {
+					await this.saveCurrentProject();
 				}
+			} catch (error) {
+				console.error("Failed to generate project thumbnail:", error);
 			}
 		} catch (error) {
 			console.error("Failed to load project:", error);
@@ -494,7 +497,7 @@ export class ProjectManager {
 		return nextFps;
 	}
 
-	async updateThumbnail({ thumbnail }: { thumbnail: string }): Promise<void> {
+	async updateThumbnail({ thumbnail }: { thumbnail: string | undefined }): Promise<void> {
 		if (!this.active) return;
 
 		const updatedProject: TProject = {
@@ -623,6 +626,13 @@ export class ProjectManager {
 		if (!this.active) return false;
 
 		const tracks = this.editor.scenes.getActiveScene().tracks;
+		if (!sceneHasMedia({ tracks })) {
+			if (this.active.metadata.thumbnail !== undefined) {
+				await this.updateThumbnail({ thumbnail: undefined });
+			}
+			return false;
+		}
+
 		const mediaAssets = this.editor.media.getAssets();
 		const duration = this.editor.timeline.getTotalDuration();
 		const { canvasSize, background } = this.active.settings;

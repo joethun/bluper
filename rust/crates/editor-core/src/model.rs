@@ -314,8 +314,6 @@ pub struct TimelineElement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animations: Option<ElementAnimations>,
     pub params: ParamValues,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub group_id: Option<String>,
     #[serde(flatten)]
     pub kind: ElementKind,
 }
@@ -677,7 +675,6 @@ mod tests {
         // what the editor wrote, and would show up as a diff on every save.
         let tracks: SceneTracks = serde_json::from_str(STORED_TRACKS).unwrap();
         let value = serde_json::to_value(&tracks.overlay[0].elements()[0]).unwrap();
-        assert!(value.get("groupId").is_none());
         assert!(value.get("sourceDuration").is_none());
     }
 }

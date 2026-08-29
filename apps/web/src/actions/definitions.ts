@@ -130,14 +130,6 @@ export const ACTIONS = {
 		description: "Show/hide selected elements",
 		category: "selection",
 	},
-	"group-selected": {
-		description: "Group selected elements",
-		category: "selection",
-	},
-	"ungroup-selected": {
-		description: "Ungroup selected elements",
-		category: "selection",
-	},
 	"toggle-bookmark": {
 		description: "Toggle bookmark at playhead",
 		category: "timeline",
@@ -185,8 +177,6 @@ const ACTION_DEFAULT_SHORTCUTS = [
 	["select-all", ["ctrl+a"]],
 	["cancel-interaction", ["escape"]],
 	["duplicate-selected", ["ctrl+d"]],
-	["group-selected", ["ctrl+g"]],
-	["ungroup-selected", ["ctrl+shift+g"]],
 	["undo", ["ctrl+z"]],
 	["redo", ["ctrl+shift+z", "ctrl+y"]],
 ] as const satisfies ReadonlyArray<

@@ -624,7 +624,6 @@ mod tests {
             source_duration: None,
             animations: None,
             params: ParamValues::new(),
-            group_id: None,
             kind: ElementKind::Video {
                 media_id: "media".to_string(),
                 hidden: None,
@@ -655,7 +654,6 @@ mod tests {
             source_duration: None,
             animations: None,
             params: ParamValues::new(),
-            group_id: None,
             kind: ElementKind::Text {
                 hidden: None,
                 fade: None,

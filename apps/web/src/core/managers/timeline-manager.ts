@@ -15,10 +15,7 @@ import {
 	calculateTotalDuration,
 	closeAllGaps,
 	closeGap,
-	createGroupId,
-	expandToGroups,
 	findGapAtTime,
-	isGroupedElement,
 	type TimelineGap,
 } from "@/timeline";
 import { TimelineDragSource } from "@/timeline/drag-source";
@@ -1048,69 +1045,6 @@ export class TimelineManager {
 			main: applyTrackOverlay(tracks.main),
 			audio: tracks.audio.map((track) => applyTrackOverlay(track)),
 		};
-	}
-
-	/**
-	 * Binds the given elements into one group, so they select, drag and delete
-	 * together from now on.
-	 *
-	 * Anything already in a group brings the rest of that group along, which is
-	 * what makes grouping a group with a loose clip do the obvious thing rather
-	 * than tearing the first group in half.
-	 */
-	groupElements({
-		elements,
-	}: {
-		elements: { trackId: string; elementId: string }[];
-	}): void {
-		const tracks = this.editor.scenes.getActiveSceneOrNull()?.tracks;
-		if (!tracks) {
-			return;
-		}
-
-		const members = expandToGroups({ tracks, elements });
-		if (members.length < 2) {
-			return;
-		}
-
-		const groupId = createGroupId();
-		this.updateElements({
-			updates: members.map(({ trackId, elementId }) => ({
-				trackId,
-				elementId,
-				patch: { groupId },
-			})),
-		});
-	}
-
-	/** Dissolves every group the given elements belong to. */
-	ungroupElements({
-		elements,
-	}: {
-		elements: { trackId: string; elementId: string }[];
-	}): void {
-		const tracks = this.editor.scenes.getActiveSceneOrNull()?.tracks;
-		if (!tracks) {
-			return;
-		}
-
-		const members = expandToGroups({ tracks, elements }).filter(
-			({ trackId, elementId }) => {
-				const element = this.getElementByRef({ trackId, elementId });
-				return element ? isGroupedElement({ element }) : false;
-			},
-		);
-		if (members.length === 0) {
-			return;
-		}
-
-		this.updateElements({
-			updates: members.map(({ trackId, elementId }) => ({
-				trackId,
-				elementId,
-				patch: { groupId: undefined },
-			})),
-		});
 	}
 
 	/**

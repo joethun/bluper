@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { DraggableItem } from "@/components/editor/panels/assets/draggable-item";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
+import { NoMediaThumbnail } from "@/components/no-media-thumbnail";
 import {
 	Section,
 	SectionContent,
@@ -17,7 +18,9 @@ import {
 } from "@/transitions";
 import { useEditor } from "@/editor/use-editor";
 import { frameRateToFloat } from "@/fps/utils";
+import { useTimelineHasMedia } from "@/timeline/hooks/use-timeline-has-media";
 import { TICKS_PER_SECOND, type MediaTime } from "@/wasm";
+import { cn } from "@/utils/ui";
 import type { TransitionDefinition } from "@/transitions/types";
 import { TransitionPreview } from "./transition-preview";
 import {
@@ -95,6 +98,7 @@ function TransitionItem({
 }) {
 	const addAtPlayhead = useAddTransitionAtPlayhead();
 	const [isHovered, setIsHovered] = useState(false);
+	const hasMedia = useTimelineHasMedia();
 
 	return (
 		// The label sits outside `DraggableItem` so it can be the Effects tile's
@@ -113,11 +117,15 @@ function TransitionItem({
 			<DraggableItem
 				name={definition.name}
 				preview={
-					<TransitionPreview
-						definition={definition}
-						frames={frames}
-						isPlaying={isHovered}
-					/>
+					hasMedia ? (
+						<TransitionPreview
+							definition={definition}
+							frames={frames}
+							isPlaying={isHovered}
+						/>
+					) : (
+						<NoMediaThumbnail />
+					)
 				}
 				onAddToTimeline={({ currentTime }) =>
 					addAtPlayhead({ definition, currentTime })
@@ -136,7 +144,10 @@ function TransitionItem({
 				// The Effects tile's chrome: a border that is always there and darkens
 				// under the pointer, in place of the asset grid's ring that only
 				// appears on hover. `ring-0` retires that ring.
-				previewClassName="rounded-sm border ring-0 transition-colors group-hover:border-muted-foreground/60"
+				previewClassName={cn(
+					"rounded-sm border ring-0 transition-colors group-hover:border-muted-foreground/60",
+					!hasMedia && "bg-muted/70",
+				)}
 			/>
 			<span className="text-muted-foreground line-clamp-2 text-xs leading-tight">
 				{definition.name}

@@ -7,7 +7,6 @@ import type { SceneTracks, TimelineElement } from "@/timeline";
 import { generateUUID } from "@/utils/id";
 import { EditorCore } from "@/core";
 import { applyPlacement, resolveTrackPlacement } from "@/timeline/placement";
-import { createGroupId } from "@/wasm/timeline";
 import { cloneAnimations } from "@/animation";
 import type { MediaTime } from "@/wasm";
 
@@ -31,11 +30,6 @@ export class DuplicateElementsCommand extends Command {
 		this.duplicatedElements = [];
 
 		let updatedTracks = this.savedState;
-		// Copies of a group form a group of their own rather than joining the one
-		// they came from — otherwise duplicating would silently double the size of
-		// the original group. Built once for the whole command so members
-		// duplicated off different tracks still land in the same new group.
-		const groupIdRemap = new Map<string, string>();
 
 		for (const track of [
 			...this.savedState.overlay,
@@ -66,7 +60,6 @@ export class DuplicateElementsCommand extends Command {
 						element,
 						id: newId,
 						startTime: element.startTime,
-						groupIdRemap,
 					}),
 				);
 			}
@@ -124,43 +117,19 @@ function buildDuplicateElement({
 	element,
 	id,
 	startTime,
-	groupIdRemap,
 }: {
 	element: TimelineElement;
 	id: string;
 	startTime: MediaTime;
-	groupIdRemap: Map<string, string>;
 }): TimelineElement {
 	return {
 		...element,
 		id,
 		name: `${element.name} (copy)`,
 		startTime,
-		groupId: remapGroupId({ groupId: element.groupId, remap: groupIdRemap }),
 		animations: cloneAnimations({
 			animations: element.animations,
 			shouldRegenerateKeyframeIds: true,
 		}),
 	};
-}
-
-function remapGroupId({
-	groupId,
-	remap,
-}: {
-	groupId: string | undefined;
-	remap: Map<string, string>;
-}): string | undefined {
-	if (!groupId) {
-		return undefined;
-	}
-
-	const existing = remap.get(groupId);
-	if (existing) {
-		return existing;
-	}
-
-	const nextGroupId = createGroupId();
-	remap.set(groupId, nextGroupId);
-	return nextGroupId;
 }
