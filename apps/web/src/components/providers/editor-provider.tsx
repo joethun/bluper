@@ -90,7 +90,7 @@ export function EditorProvider({ projectId, children }: EditorProviderProps) {
 				if (isNotFound) {
 					try {
 						const newProjectId = await editor.project.createNewProject({
-							name: "Untitled Project",
+							name: editor.project.getNextDefaultProjectName(),
 						});
 						if (cancelled) return;
 						// Point the URL at the replacement, then load it here rather

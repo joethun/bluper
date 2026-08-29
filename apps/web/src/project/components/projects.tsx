@@ -170,7 +170,7 @@ async function createProject({
 }) {
 	try {
 		const projectId = await editor.project.createNewProject({
-			name: "New project",
+			name: editor.project.getNextDefaultProjectName(),
 		});
 		router.push(editorHref({ projectId }));
 	} catch (error) {

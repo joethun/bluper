@@ -600,6 +600,28 @@ export class ProjectManager {
 		this.notify();
 	}
 
+	getNextDefaultProjectName(): string {
+		const baseName = "Untitled Project";
+		const usedNumbers = new Set<number>();
+		let baseNameUsed = false;
+
+		for (const project of this.savedProjects) {
+			if (project.name === baseName) {
+				baseNameUsed = true;
+				continue;
+			}
+			const match = project.name.match(/^Untitled Project (\d+)$/);
+			if (!match) continue;
+			usedNumbers.add(Number.parseInt(match[1], 10));
+		}
+
+		if (!baseNameUsed) return baseName;
+
+		let n = 2;
+		while (usedNumbers.has(n)) n++;
+		return `${baseName} ${n}`;
+	}
+
 	getSavedProjects(): TProjectMetadata[] {
 		return this.savedProjects;
 	}
