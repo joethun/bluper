@@ -1,6 +1,7 @@
 import type { VideoSample } from "@/media/video-sample";
 import { tauriClearDecodeCache } from "@/lib/tauri-runtime";
 import type { MediaSourceRef } from "@/media/source";
+import { measureSpanAsync } from "@/diagnostics/render-perf";
 import { forgetCachedGops, openNativeVideoSink } from "./native-sink";
 
 /**
@@ -127,6 +128,18 @@ function closeSample(sample: VideoSample | null) {
 class VideoCache {
 	private sinks = new Map<string, VideoSinkData>();
 	/**
+	 * Whether the playhead is running rather than being placed.
+	 *
+	 * The two want opposite things from a decoder. A scrub wants one frame at
+	 * wherever the pointer is and nothing kept, because the next position is
+	 * somewhere else; playback wants an iterator open at the playhead and frames
+	 * decoded before they are asked for. Set by {@link PlaybackManager}, which is
+	 * the only thing that knows which is happening — the request stream cannot
+	 * tell them apart, since a slow drag looks exactly like playback until it
+	 * stops.
+	 */
+	private playing = false;
+	/**
 	 * Assets being read through the shell's demuxer, by id. The shell keeps the
 	 * GOPs it demuxed on disk, and it is keyed by path rather than by asset, so
 	 * this is what lets {@link clearVideo} tell it which files to drop.
@@ -157,19 +170,152 @@ class VideoCache {
 		this.evictSinks();
 	}
 
-	private evictSinks(): void {
-		// Eviction runs at the *start* of a pass, before anything has asked for a
-		// frame in it, so "used this pass" is not yet a usable signal — judging by
-		// it would make every decoder look idle and evict the ones this pass is
-		// about to need. The previous pass is the evidence available: a decoder it
-		// wanted is on screen, and dropping it would force an immediate and far
-		// more expensive reopen. So a decoder is only a candidate once two
-		// consecutive passes have gone without it.
-		const isEvictable = (sinkData: VideoSinkData) =>
-			this.frameCounter - sinkData.lastFrame > 1;
+	/**
+	 * Tells the cache the playhead has started or stopped running. See
+	 * {@link playing}.
+	 */
+	setPlaying({ playing }: { playing: boolean }): void {
+		const started = playing && !this.playing;
+		this.playing = playing;
+		if (!started) return;
 
+		// The playhead was parked, so every decoder on screen is holding the one
+		// frame a seek asked it for and has no iterator — a seek deliberately
+		// leaves none. Without this the first frame of playback pays a shell
+		// decode to move one frame forward, and only then starts opening the
+		// iterator that the rest of the clip comes from. Both belong before the
+		// clock starts rather than inside the first frame of it.
+		//
+		// Queued behind whatever the sink is already answering rather than run
+		// here: play can be pressed in the middle of a render pass, and a seek
+		// part-way through would otherwise have a second `samples()` opened
+		// underneath it — two iterators resetting one decoder. `seekToTime` waits
+		// on an open it can see, and this is what makes sure it can see it.
+		for (const [sinkKey, sinkData] of this.sinks) {
+			if (!sinkData.currentFrame) continue;
+			const previous = this.frameChain.get(sinkKey) ?? Promise.resolve();
+			const warmed = previous.then(() => {
+				// Paused again while this waited its turn, or the frames it would
+				// have decoded were asked for and it has an iterator already.
+				if (!this.playing) return;
+				this.openIteratorInBackground({ sinkData, time: sinkData.lastTime });
+			});
+			this.frameChain.set(
+				sinkKey,
+				warmed.catch(() => {}),
+			);
+		}
+	}
+
+	/**
+	 * Opens and positions a decoder for a clip the playhead is about to reach.
+	 *
+	 * A cut is the most expensive moment in playback. The incoming clip has no
+	 * decoder, so the first frame of it pays for probing the container, demuxing
+	 * a GOP and decoding a frame in the shell — and then the frame after it pays
+	 * again, because an iterator takes another GOP's worth of decoding to open.
+	 * All of that lands inside render passes the preview is waiting on, which is
+	 * why playback stalls at every join rather than only at the first one.
+	 *
+	 * Doing it a second or two early moves the whole sequence off the critical
+	 * path: by the time the cut arrives the sink exists, its first frame is
+	 * decoded and its iterator is open, so the clip starts on the same fast path
+	 * the one before it was already on. Nothing here is awaited — a prewarm that
+	 * has not finished simply leaves the cut as expensive as it used to be.
+	 *
+	 * Only while playing, and only for a clip that has no decoder yet: a scrub
+	 * would open one per pointer move and throw each away, and a sink that
+	 * already exists may be the one drawing the current frame.
+	 */
+	prewarm({
+		mediaId,
+		sinkKey = mediaId,
+		source,
+		time,
+	}: {
+		mediaId: string;
+		sinkKey?: string;
+		source: MediaSourceRef;
+		time: number;
+	}): void {
+		if (!this.playing) return;
+
+		const existing = this.sinks.get(sinkKey);
+		if (existing) {
+			// Already warm, and it has to stay warm until the playhead arrives.
+			// Eviction counts render passes while the lookahead counts seconds, and
+			// nothing else asks this decoder for a frame in between — so its
+			// `lastFrame` would sit still for the whole wait, making it both the
+			// first candidate the cap reaches for and, on a project fast enough to
+			// render `IDLE_FRAMES_BEFORE_EVICTION` passes inside the lookahead,
+			// retired a few frames before the cut it was opened for. A clip the
+			// playhead is about to enter is wanted as surely as one on screen.
+			existing.lastFrame = this.frameCounter;
+			return;
+		}
+		if (this.initPromises.has(sinkKey)) return;
+
+		// A timeline of very short clips can have several joins inside the
+		// lookahead at once. Opening a decoder for all of them would push the ones
+		// actually on screen out of the cap they share, so the last slot is taken
+		// from a decoder whose clip has already played rather than added to the
+		// total — and if there is no such decoder, the cut pays what it used to.
+		if (this.sinks.size >= MAX_IDLE_SINKS && !this.evictLeastRecentlyUsed()) {
+			return;
+		}
+
+		void this.getSampleAt({ mediaId, sinkKey, source, time }).catch(() => {
+			// A clip that cannot be opened yet is not a failure here: the frame
+			// that genuinely needs it will ask again and report it then.
+		});
+	}
+
+	/**
+	 * Whether this decoder can be retired.
+	 *
+	 * Eviction runs at the *start* of a pass, before anything has asked for a
+	 * frame in it, so "used this pass" is not yet a usable signal — judging by it
+	 * would make every decoder look idle and evict the ones this pass is about to
+	 * need. The previous pass is the evidence available: a decoder it wanted is on
+	 * screen, and dropping it would force an immediate and far more expensive
+	 * reopen. So a decoder is only a candidate once two consecutive passes have
+	 * gone without it.
+	 *
+	 * That also protects a decoder {@link prewarm} is holding for a clip the
+	 * playhead is about to reach, because a prewarm re-marks it every pass.
+	 */
+	private isEvictable({ sinkData }: { sinkData: VideoSinkData }): boolean {
+		return this.frameCounter - sinkData.lastFrame > 1;
+	}
+
+	/**
+	 * Retires the decoder that has gone unasked-for the longest, and says whether
+	 * there was one.
+	 *
+	 * Only ever an idle decoder: one a recent pass wanted is either on screen or
+	 * being held for a clip the playhead is about to reach, and both of those are
+	 * needed more certainly than the clip this is making room for.
+	 */
+	private evictLeastRecentlyUsed(): boolean {
+		let oldestKey: string | null = null;
+		let oldestFrame = Number.POSITIVE_INFINITY;
+
+		for (const [sinkKey, sinkData] of this.sinks) {
+			if (!this.isEvictable({ sinkData })) continue;
+			if (sinkData.lastFrame < oldestFrame) {
+				oldestFrame = sinkData.lastFrame;
+				oldestKey = sinkKey;
+			}
+		}
+
+		if (oldestKey === null) return false;
+		this.clearSink({ sinkKey: oldestKey });
+		return true;
+	}
+
+	private evictSinks(): void {
 		for (const [sinkKey, sinkData] of [...this.sinks]) {
-			if (!isEvictable(sinkData)) continue;
+			if (!this.isEvictable({ sinkData })) continue;
 			if (
 				this.frameCounter - sinkData.lastFrame >
 				IDLE_FRAMES_BEFORE_EVICTION
@@ -178,17 +324,12 @@ class VideoCache {
 			}
 		}
 
-		let overCap = this.sinks.size - MAX_IDLE_SINKS;
-		if (overCap <= 0) return;
-
-		const leastRecentlyUsed = [...this.sinks]
-			.filter(([, sinkData]) => isEvictable(sinkData))
-			.sort(([, a], [, b]) => a.lastFrame - b.lastFrame);
-
-		for (const [sinkKey] of leastRecentlyUsed) {
-			if (overCap <= 0) break;
-			this.clearSink({ sinkKey });
-			overCap--;
+		// Trimmed one at a time through the same helper `prewarm` steals a slot
+		// with, so there is one answer to "which decoder goes next" rather than
+		// two that have to be kept in agreement.
+		while (this.sinks.size > MAX_IDLE_SINKS && this.evictLeastRecentlyUsed()) {
+			// `evictLeastRecentlyUsed` reports false once nothing is idle, which is
+			// what stops this short of retiring a decoder that is still in use.
 		}
 	}
 
@@ -271,7 +412,10 @@ class VideoCache {
 			time < sinkData.lastTime + 2.0;
 
 		if (sinkData.iterator && continuing) {
-			const frame = await this.iterateToTime({ sinkData, targetTime: time });
+			const frame = await measureSpanAsync({
+				name: "sinkIterate",
+				fn: () => this.iterateToTime({ sinkData, targetTime: time }),
+			});
 			if (frame) {
 				if (!sinkData.nextFrame && !sinkData.prefetching) {
 					this.startPrefetch({ sinkData });
@@ -300,7 +444,10 @@ class VideoCache {
 			}
 		}
 
-		const frame = await this.seekToTime({ sinkData, time });
+		const frame = await measureSpanAsync({
+			name: "sinkSeek",
+			fn: () => this.seekToTime({ sinkData, time }),
+		});
 		if (frame) {
 			if (!sinkData.nextFrame && !sinkData.prefetching) {
 				this.startPrefetch({ sinkData });
@@ -417,7 +564,18 @@ class VideoCache {
 			// dragged, `resolveSample` opens the iterator then.
 			if (sinkData.source.frameAt) {
 				const frame = await this.nativeFrameAt({ sinkData, time });
-				if (frame) return frame;
+				if (frame) {
+					// Playing, so the frames after this one are wanted too. Opening
+					// the iterator here rather than waiting for the next request to
+					// notice saves a second shell decode per cut and per press of
+					// play — each of them a whole IPC round trip inside a frame.
+					// A scrub deliberately does not: it wants this one picture, and
+					// the decoder would be at the wrong place by the next move.
+					if (this.playing) {
+						this.openIteratorInBackground({ sinkData, time });
+					}
+					return frame;
+				}
 				// The shell could not decode there. Fall through: the iterator
 				// scans, so it can still find a frame where a direct decode found
 				// none.

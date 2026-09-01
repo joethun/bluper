@@ -92,7 +92,11 @@ function recordSpan({
 	stats.samples.push(durationMs);
 }
 
-export async function measureSpanAsync<T>({
+// Not `async`: an async function returning `fn()` adopts it, so the disabled
+// path — every normal run — would still pay a wrapper promise and two microtask
+// ticks per call, several times a frame. Handing the caller's own promise back
+// untouched is what makes "zero overhead when disabled" true.
+export function measureSpanAsync<T>({
 	name,
 	fn,
 }: {
@@ -101,11 +105,9 @@ export async function measureSpanAsync<T>({
 }): Promise<T> {
 	if (!isRenderPerfEnabled()) return fn();
 	const start = performance.now();
-	try {
-		return await fn();
-	} finally {
+	return fn().finally(() => {
 		recordSpan({ name, durationMs: performance.now() - start });
-	}
+	});
 }
 
 export function measureSpanSync<T>({

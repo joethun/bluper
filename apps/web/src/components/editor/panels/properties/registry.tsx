@@ -19,6 +19,7 @@ import type { MediaAsset } from "@/media/types";
 import { AdjustTab, BlendingTab } from "@/adjustments/components/adjust-tab";
 import { CropTab } from "@/crop/components/crop-tab";
 import {
+	CircleDashedIcon,
 	CircleFadingArrowUpIcon,
 	CropIcon,
 	DropletIcon,
@@ -209,7 +210,9 @@ function buildMasksTab({
 	return {
 		id: "masks",
 		label: "Masks",
-		icon: <ShapesIcon />,
+		// Not the Shapes icon the graphic tab wears: the two sat side by side in
+		// the rail on a shape and read as the same button twice.
+		icon: <CircleDashedIcon />,
 		content: ({ trackId }) => <MasksTab element={element} trackId={trackId} />,
 	};
 }
@@ -376,7 +379,6 @@ function getGraphicConfig({
 			buildTransformTab({ element }),
 			buildBlendingTab({ element }),
 			buildMasksTab({ element }),
-			buildClipEffectsTab({ element }),
 		],
 	};
 }

@@ -1,7 +1,7 @@
 use wgpu::util::DeviceExt;
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 use wasm_bindgen::{JsCast, JsValue};
@@ -109,14 +109,42 @@ pub struct GpuContext {
     /// texture. See [`StagingCanvas`].
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
     video_staging: RefCell<Option<StagingCanvas>>,
+    /// How many times the staging canvas has been built.
+    ///
+    /// Reported so a check can hold down the one thing [`StagingCanvas`] is for:
+    /// that uploading at a new size grows the canvas once and every size seen
+    /// before is free. The failure it guards has no other symptom — an allocation
+    /// per cut, or per frame, is a dropped frame and nothing else.
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    video_staging_allocations: Cell<u32>,
 }
 
 /// An `OffscreenCanvas` and its 2D context, kept between uploads.
 ///
 /// `import_video_frame_texture` built both on every call — a canvas, a backing
 /// store of `width * height * 4` bytes and a `getContext` — which is once per
-/// video layer per frame, for objects that depend only on the target size. That
-/// size changes when the preview is resized and at no other time.
+/// video layer per frame, for objects that depend only on the target size.
+///
+/// ## Why it is never replaced by a smaller one
+///
+/// The target size is not a property of the preview. It is how many pixels the
+/// layer covers, bucketed to 64 (see `fitUploadToQuad`), capped at the source's
+/// own resolution — so it differs between two clips of different resolutions or
+/// aspect ratios, and between two layers on screen together. Keyed by exact
+/// size, one slot therefore threw its canvas away and built another:
+///
+/// - at every cut between clips whose upload sizes fall in different buckets,
+///   which on a timeline mixing sources is some cuts and not others — a dropped
+///   frame at those joins and a clean one at the rest;
+/// - on *every frame* where two video layers of different sizes are composited
+///   together, each upload replacing the other's canvas.
+///
+/// Only the top-left `width × height` of this canvas is ever cleared, drawn or
+/// read back, so one that is larger than the request serves it exactly. Holding
+/// the largest asked for costs one backing store at the project's biggest source
+/// resolution — which an exact-size slot allocates too, the first time that clip
+/// is drawn — and reallocation stops after the sizes on the timeline have been
+/// seen once.
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 struct StagingCanvas {
     width: u32,
@@ -219,6 +247,8 @@ impl GpuContext {
             gl_surface: RefCell::new(None),
             #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
             video_staging: RefCell::new(None),
+            #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+            video_staging_allocations: Cell::new(0),
         })
     }
 
@@ -324,6 +354,37 @@ impl GpuContext {
             .await?;
 
         Ok((adapter, device, queue))
+    }
+
+    /// The texture an upload of this size should write into, reusing `existing`
+    /// when it is already the right shape.
+    ///
+    /// An upload used to allocate every time, so a video layer freed and
+    /// reallocated its whole texture on every rendered frame — a couple of
+    /// megabytes of driver-side allocation per layer per frame for a surface
+    /// whose size only changes when the layer is resized. A `wgpu::Texture` is a
+    /// handle, so keeping one costs a refcount bump and the pixels are replaced
+    /// by the write that follows either way.
+    ///
+    /// The store still bumps the id's generation on every upload, so anything
+    /// caching work derived from a texture — the mask feather cache — sees the
+    /// new contents rather than the recycled handle.
+    pub fn render_texture_for(
+        &self,
+        existing: Option<&wgpu::Texture>,
+        width: u32,
+        height: u32,
+        label: &str,
+    ) -> wgpu::Texture {
+        if let Some(texture) = existing {
+            if texture.width() == width
+                && texture.height() == height
+                && texture.format() == self.texture_format
+            {
+                return texture.clone();
+            }
+        }
+        self.create_render_texture(width, height, label)
     }
 
     pub fn create_render_texture(
@@ -730,11 +791,12 @@ impl GpuContext {
     pub fn import_offscreen_canvas_texture(
         &self,
         canvas: &wgpu::web_sys::OffscreenCanvas,
+        existing: Option<&wgpu::Texture>,
         width: u32,
         height: u32,
         label: &str,
     ) -> wgpu::Texture {
-        let texture = self.create_render_texture(width, height, label);
+        let texture = self.render_texture_for(existing, width, height, label);
 
         if self.supports_external_texture_copies {
             self.queue.copy_external_image_to_texture(
@@ -765,7 +827,8 @@ impl GpuContext {
         texture
     }
 
-    /// The staging context for a `width` x `height` upload, built once per size.
+    /// The staging context for a `width` x `height` upload, grown to cover the
+    /// largest one asked for so far.
     ///
     /// The context is handed back by clone, which for a `web_sys` handle is a
     /// reference bump rather than a copy of the canvas.
@@ -778,14 +841,24 @@ impl GpuContext {
         let mut slot = self.video_staging.borrow_mut();
         if let Some(staging) = slot
             .as_ref()
-            .filter(|staging| staging.width == width && staging.height == height)
+            .filter(|staging| staging.width >= width && staging.height >= height)
         {
             return staging.context.clone();
         }
 
+        // Covers what is asked for *and* what the outgoing canvas covered, per
+        // axis: a run of layers whose sizes differ settles on one canvas instead
+        // of trading places with each other. See [`StagingCanvas`].
+        let (width, height) = match slot.as_ref() {
+            Some(staging) => (staging.width.max(width), staging.height.max(height)),
+            None => (width, height),
+        };
+
         let canvas = wgpu::web_sys::OffscreenCanvas::new(width, height)
             .expect("Failed to create staging OffscreenCanvas");
         let context = offscreen_2d_context(&canvas, "VideoFrame staging");
+        self.video_staging_allocations
+            .set(self.video_staging_allocations.get() + 1);
         let handed_out = context.clone();
         *slot = Some(StagingCanvas {
             width,
@@ -794,6 +867,13 @@ impl GpuContext {
             context,
         });
         handed_out
+    }
+
+    /// How many staging canvases have been built. See
+    /// [`GpuContext::video_staging_allocations`].
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn video_staging_allocations(&self) -> u32 {
+        self.video_staging_allocations.get()
     }
 
     /// Imports a `VideoFrame` into a GPU texture.
@@ -825,20 +905,21 @@ impl GpuContext {
     pub fn import_video_frame_texture(
         &self,
         video_frame: &wgpu::web_sys::VideoFrame,
+        existing: Option<&wgpu::Texture>,
         width: u32,
         height: u32,
         label: &str,
     ) -> wgpu::Texture {
-        let texture = self.create_render_texture(width, height, label);
+        let texture = self.render_texture_for(existing, width, height, label);
         let ctx = self.video_staging_context(width, height);
         ctx.clear_rect(0.0, 0.0, width as f64, height as f64);
         // The destination-size form, so a target smaller than the frame scales
         // it down rather than cropping it to the staging canvas. WebKitGTK is
         // known to ignore `drawImage`'s *source* rectangle for a VideoFrame
-        // (see `cropToSurface`), which is why the kept-region crop goes through
-        // a canvas copy — the destination size is a different argument and is
-        // honoured. The "A scaled VideoFrame draw fills the staging canvas"
-        // desktop check holds that claim down.
+        // (see `drawCropped`, which is why the kept-region crop is expressed as
+        // a negative destination offset instead) — the destination size is a
+        // different argument and is honoured. The "A scaled VideoFrame draw
+        // fills the staging canvas" desktop check holds that claim down.
         ctx.draw_image_with_video_frame_and_dw_and_dh(
             video_frame,
             0.0,

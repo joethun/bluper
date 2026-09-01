@@ -418,17 +418,17 @@ function collectVisualSourceNode({
 			contentHash: `cropped:${identityKey(source)}:${hashCrop({ crop })}:${sourceWidth}x${sourceHeight}`,
 			width: sourceWidth,
 			height: sourceHeight,
+			// Straight into the texture's own canvas: it is already exactly the
+			// kept region's size, so a surface in between would only be a second
+			// clear and a second blit of the same pixels.
 			draw: (ctx) => {
-				ctx.drawImage(
-					cropToSurface({
-						source,
-						sourceWidth: fullSourceWidth,
-						sourceHeight: fullSourceHeight,
-						cropRect,
-					}),
-					0,
-					0,
-				);
+				drawCropped({
+					ctx,
+					source,
+					sourceWidth: fullSourceWidth,
+					sourceHeight: fullSourceHeight,
+					cropRect,
+				});
 			},
 		});
 	} else if (typeof VideoFrame !== "undefined" && source instanceof VideoFrame) {
@@ -736,13 +736,11 @@ function fitUploadToQuad({
  * source everywhere downstream. Borrowed rather than allocated because a cropped
  * clip redraws this on every frame it plays.
  *
- * A decoded `VideoFrame` is copied whole into a canvas first. WebKitGTK draws a
- * frame straight through — the same quirk `keepSourceAlpha` copies around for
- * composite operations — and it ignores `drawImage`'s source rectangle along
- * with everything else, so cropping a frame directly handed back the whole
- * picture squeezed into the cropped box instead of the part that was kept.
- * Measured by the "Cropping a decoded frame keeps only the kept pixels" desktop
- * check, which also records whether the engine still needs the copy.
+ * Only for the callers that need the region as an image of its own — the effect
+ * and adjustment chains, which take a source to paint from. A layer whose
+ * texture *is* the kept region skips this and lets {@link drawCropped} write
+ * straight into the texture's canvas, since a surface in between would be
+ * another clear and another blit of the same pixels.
  */
 function cropToSurface({
 	source,
@@ -755,18 +753,67 @@ function cropToSurface({
 	sourceHeight: number;
 	cropRect: CropRect;
 }): OffscreenCanvas {
-	const croppable =
-		typeof VideoFrame !== "undefined" && source instanceof VideoFrame
-			? copyFrameToSurface({ source, width: sourceWidth, height: sourceHeight })
-			: source;
-
 	const surface = borrowSurface({
 		key: SURFACE_KEYS.crop,
 		width: cropRect.width,
 		height: cropRect.height,
 	});
-	surface.ctx.drawImage(
-		croppable,
+	drawCropped({
+		ctx: surface.ctx,
+		source,
+		sourceWidth,
+		sourceHeight,
+		cropRect,
+	});
+	return surface.canvas;
+}
+
+/**
+ * Draws the kept region of `source` into `ctx`, with the crop's top-left corner
+ * on the origin.
+ *
+ * A decoded `VideoFrame` cannot be sub-rected on the way in. WebKitGTK draws a
+ * frame straight through, and that includes ignoring `drawImage`'s *source*
+ * rectangle — cropping one directly hands back the whole picture squeezed into
+ * the cropped box rather than the part that was kept, which reads as the clip
+ * being squished. The "Cropping a decoded frame keeps only the kept pixels"
+ * check measures that quirk.
+ *
+ * The answer used to be to copy the frame whole onto a canvas and sub-rect that
+ * instead, which cost a full-resolution clear, a full-resolution blit and a
+ * pooled canvas the size of the source — on every frame of every cropped clip,
+ * to read back a region usually smaller than the copy. Positioning the frame
+ * costs none of it: the *destination* offset is honoured, being ordinary
+ * geometry rather than the sampling the engine skips, so drawing the whole frame
+ * shifted up and left by the crop origin lands the kept region on the origin and
+ * the canvas clips the rest away. One blit, and it writes only the pixels kept.
+ * Pinned by "A frame drawn at a negative offset crops to the kept pixels".
+ *
+ * Only frames need it. A canvas or an image sub-rects correctly on every engine,
+ * and a source rectangle reads only the pixels it names, so those keep the
+ * direct form rather than paying to sample a whole large source for a small
+ * crop.
+ */
+function drawCropped({
+	ctx,
+	source,
+	sourceWidth,
+	sourceHeight,
+	cropRect,
+}: {
+	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+	source: CanvasImageSource;
+	sourceWidth: number;
+	sourceHeight: number;
+	cropRect: CropRect;
+}): void {
+	if (typeof VideoFrame !== "undefined" && source instanceof VideoFrame) {
+		ctx.drawImage(source, -cropRect.x, -cropRect.y, sourceWidth, sourceHeight);
+		return;
+	}
+
+	ctx.drawImage(
+		source,
 		cropRect.x,
 		cropRect.y,
 		cropRect.width,
@@ -776,26 +823,6 @@ function cropToSurface({
 		cropRect.width,
 		cropRect.height,
 	);
-	return surface.canvas;
-}
-
-/** A decoded frame copied whole onto a canvas, which every engine sub-rects correctly. */
-function copyFrameToSurface({
-	source,
-	width,
-	height,
-}: {
-	source: CanvasImageSource;
-	width: number;
-	height: number;
-}): OffscreenCanvas {
-	const surface = borrowSurface({
-		key: SURFACE_KEYS.cropSource,
-		width,
-		height,
-	});
-	surface.ctx.drawImage(source, 0, 0, width, height);
-	return surface.canvas;
 }
 
 function fullCanvasTransform(

@@ -28,6 +28,8 @@ pub fn apply_mask_feather(options: JsValue) -> Result<wgpu::web_sys::OffscreenCa
     with_gpu_runtime(|runtime| {
         let mask_texture = runtime.context.import_offscreen_canvas_texture(
             &mask,
+            // A one-shot import with nothing held to write into.
+            None,
             width,
             height,
             "masks-input-texture",

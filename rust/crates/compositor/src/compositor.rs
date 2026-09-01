@@ -206,7 +206,25 @@ impl Compositor {
         }
     }
 
-    pub fn upsert_texture(&mut self, id: String, texture: wgpu::Texture) {
+    /// Replaces the texture held for `id` with the one `import` produces, handing
+    /// it whatever is stored there now so the upload can write into that
+    /// allocation instead of building another.
+    ///
+    /// The lookup and the store are one call rather than two because they are
+    /// only correct together, and only for the same id. An upload that forgot to
+    /// pass the existing texture would quietly go back to allocating one per
+    /// layer per frame — a couple of megabytes of driver-side work inside a
+    /// frame, whose only symptom is a dropped one.
+    ///
+    /// `upsert` still bumps the id's generation, so anything caching work
+    /// derived from a texture — the mask feather cache — sees the new contents
+    /// rather than the recycled handle.
+    pub fn upsert_texture_with(
+        &mut self,
+        id: String,
+        import: impl FnOnce(Option<&wgpu::Texture>) -> wgpu::Texture,
+    ) {
+        let texture = import(self.textures.get(&id));
         self.textures.upsert(id, texture);
     }
 

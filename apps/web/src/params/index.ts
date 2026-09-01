@@ -34,8 +34,6 @@ export interface NumberParamDefinition<
 	unit?: "percent";
 	/** Unit rendered after the value in the number field (e.g. "dB"). Display only. */
 	suffix?: string;
-	/** Short label shown as the scrub handle icon in the number field (e.g. "W", "R"). */
-	shortLabel?: string;
 	/**
 	 * Render as a full-width track slider instead of the scrub field. For params
 	 * judged by eye against the picture — exposure, saturation — where the useful

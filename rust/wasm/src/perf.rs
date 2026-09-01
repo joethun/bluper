@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use js_sys::{Array, Object, Reflect};
 use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
+use crate::gpu::with_gpu_runtime;
+
 thread_local! {
     static LAST_FRAME_PROFILE: RefCell<Vec<(&'static str, f64)>> = const { RefCell::new(Vec::new()) };
 }
@@ -48,4 +50,19 @@ pub fn get_last_frame_profile() -> Array {
         }
         array
     })
+}
+
+/// How many times the `VideoFrame` staging canvas has been built since the GPU
+/// came up.
+///
+/// The staging canvas is what every decoded frame is drawn through on its way to
+/// a texture, and it is sized by the layer's on-screen footprint — so keyed by
+/// exact size it was thrown away and rebuilt at cuts between clips of different
+/// resolutions, and on every frame where two such layers composited together.
+/// It now only ever grows, and this is the number that says so: nothing else
+/// about the failure is observable, since an allocation per frame reads only as a
+/// dropped one.
+#[wasm_bindgen(js_name = videoStagingAllocations)]
+pub fn video_staging_allocations() -> Result<u32, JsValue> {
+    with_gpu_runtime(|runtime| Ok(runtime.context.video_staging_allocations()))
 }

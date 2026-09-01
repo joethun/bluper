@@ -1,5 +1,5 @@
 import type { FrameRate } from "bluper-wasm";
-import type { SceneTracks, TimelineTrack } from "@/timeline";
+import type { SceneTracks, TimelineTrack, VideoElement } from "@/timeline";
 import { TICKS_PER_SECOND } from "@/wasm";
 import type { MediaAsset } from "@/media/types";
 import { createMediaSource } from "@/media/source";
@@ -22,12 +22,12 @@ import {
 } from "@/rendering";
 import { pickClipAdjustmentParams } from "@/adjustments/clip";
 import { readCropFromParams } from "@/crop";
+import { resolveSampledSourceTime } from "@/freeze";
 import {
 	findTransitions,
 	getTransitionBindingsForElement,
 } from "@/transitions";
 import type { TransitionPlacement } from "@/transitions";
-
 const PREVIEW_MAX_IMAGE_SIZE = 2048;
 
 function getVisibleSortedElements({ track }: { track: TimelineTrack }) {
@@ -41,48 +41,157 @@ function getVisibleSortedElements({ track }: { track: TimelineTrack }) {
 }
 
 /**
- * The clips that must decode from a position of their own rather than the one
- * shared per asset. Both sides of a transition need a different frame of their
- * source at the same moment, and one decoder can only be in one place — the
- * later request supersedes the earlier one, which then receives whatever frame
- * happens to be current. Splitting a clip and putting a transition on the cut is
- * the usual way to end up with two clips reading one file at once.
+ * One track's elements and cuts, read once per scene build.
  *
- * Only the incoming side moves onto its own decoder, so the outgoing clip keeps
- * the shared one and an ordinary timeline never pays for a second.
+ * Both halves are more expensive than they look. `findTransitions` crosses into
+ * wasm, which deserialises the whole track — every element with its params,
+ * animations, keyframes and masks — and the sort's tiebreak is an Intl
+ * collation. `buildScene` needs them from three places (the decoder keys, the
+ * clip nodes, the blur backdrop), so they are read here and handed round rather
+ * than recomputed per consumer.
  */
-function getOwnDecoderElementIds({
-	placements,
-	track,
-}: {
-	placements: TransitionPlacement[];
+interface TrackView {
 	track: TimelineTrack;
-}): Set<string> {
-	const mediaIdOf = new Map(
-		track.elements.map((element) => [
-			element.id,
-			"mediaId" in element ? element.mediaId : undefined,
-		]),
-	);
-	const ids = new Set<string>();
+	elements: ReturnType<typeof getVisibleSortedElements>;
+	/**
+	 * Transitions come from the track as stored, not from `elements`: the
+	 * transition commands resolve neighbours the same way, so a hidden clip keeps
+	 * owning its cut and unhiding it does not silently move the transition.
+	 */
+	transitions: TransitionPlacement[];
+}
 
-	for (const placement of placements) {
-		if (placement.sides.length < 2) {
-			continue;
-		}
-		const mediaIds = placement.sides.map((side) =>
-			mediaIdOf.get(side.elementId),
-		);
-		if (mediaIds[0] === undefined || mediaIds[0] !== mediaIds[1]) {
-			continue;
-		}
-		const incoming = placement.sides.find((side) => side.role === "incoming");
-		if (incoming) {
-			ids.add(incoming.elementId);
-		}
+function readTrackView({ track }: { track: TimelineTrack }): TrackView {
+	return {
+		track,
+		elements: getVisibleSortedElements({ track }),
+		transitions: findTransitions({ track }),
+	};
+}
+
+/**
+ * Where in its file a clip reads at `clipTime`. At zero that is the clip's
+ * in-point; at its whole duration, the source time just past its last frame —
+ * which is where a clip carrying straight on from it would begin.
+ */
+function sourceTimeAt({
+	element,
+	clipTime,
+}: {
+	element: VideoElement;
+	clipTime: number;
+}): number {
+	return resolveSampledSourceTime({
+		freeze: element.freeze,
+		trimStart: element.trimStart,
+		clipTime,
+		clipDuration: element.duration,
+		retime: element.retime,
+	});
+}
+
+/**
+ * Whether `element` carries straight on from `previous`: the same file, joined
+ * on the timeline, and entered on the very source frame `previous` stopped
+ * before. One decoder running forwards serves both, so the cut between them
+ * costs nothing at all.
+ *
+ * A clip on either side of a transition is excluded however continuous it looks.
+ * A transition draws both clips at once and each wants a different frame of the
+ * source at the same moment, which one decoder cannot be in two places to give.
+ */
+function continuesDecoding({
+	previous,
+	element,
+	transitioning,
+	ticksPerFrame,
+}: {
+	previous: VideoElement;
+	element: VideoElement;
+	transitioning: ReadonlySet<string>;
+	ticksPerFrame: number | null;
+}): boolean {
+	// Without a frame rate there is no scale to judge "joined" or "the next
+	// frame" against, so nothing is treated as continuous and every clip decodes
+	// from a position of its own.
+	if (!ticksPerFrame || ticksPerFrame <= 0) return false;
+	if (previous.mediaId !== element.mediaId) return false;
+	if (transitioning.has(previous.id) || transitioning.has(element.id)) {
+		return false;
+	}
+	// A freeze pins its clip's decoder to one source time, so neither the clip
+	// before it nor the one after runs through it.
+	if (previous.freeze || element.freeze) return false;
+
+	const gap = element.startTime - (previous.startTime + previous.duration);
+	if (gap < 0 || gap >= ticksPerFrame) return false;
+
+	const previousOut = sourceTimeAt({
+		element: previous,
+		clipTime: previous.duration,
+	});
+	const inPoint = sourceTimeAt({ element, clipTime: 0 });
+	return Math.abs(inPoint - previousOut) < ticksPerFrame;
+}
+
+/**
+ * Which decoder each video clip on a track samples from, keyed by element id.
+ *
+ * Two clips share one only when the second continues the first — a split clip,
+ * where the decoder's iterator simply keeps running across the cut. That case is
+ * free, and it is the only one that is: a decoder holds a single position, so any
+ * other pair of clips reading one file makes the later request supersede the
+ * earlier one, which then silently receives whatever frame happens to be current.
+ *
+ * Everything else gets a decoder of its own, and the reason is prewarming. A clip
+ * the playhead is about to reach has its decoder opened and positioned a couple
+ * of seconds early — see `prewarmUpcomingVideoNode` — and that can only happen
+ * under a key nothing is using, because a decoder that already exists is serving
+ * the picture on screen and cannot be moved off it. One key per asset quietly
+ * excluded every clip whose file was already open somewhere on the timeline: the
+ * later halves of an A/B/A/B cut, a shot used twice, two trims of one recording
+ * butted together. Those joins got no prewarm at all and paid the whole cold
+ * start — a container probe, a GOP demux and a shell decode — inside the render
+ * pass the preview was waiting on, which is why some cuts on a timeline stuttered
+ * and the ones beside them did not.
+ */
+function getSinkKeysByElementId({
+	view,
+	ticksPerFrame,
+}: {
+	view: TrackView;
+	ticksPerFrame: number | null;
+}): Map<string, string> {
+	const keys = new Map<string, string>();
+	const transitioning = new Set(
+		view.transitions.flatMap((placement) =>
+			placement.sides.map((side) => side.elementId),
+		),
+	);
+
+	let previous: { element: VideoElement; key: string } | null = null;
+
+	for (const element of view.elements) {
+		if (element.type !== "video") continue;
+
+		// Annotated because the inference is circular: the key of a continuation
+		// is the previous clip's, and the previous clip's is set from this.
+		const key: string =
+			previous &&
+			continuesDecoding({
+				previous: previous.element,
+				element,
+				transitioning,
+				ticksPerFrame,
+			})
+				? previous.key
+				: `${element.mediaId}:${element.id}`;
+
+		keys.set(element.id, key);
+		previous = { element, key };
 	}
 
-	return ids;
+	return keys;
 }
 
 /**
@@ -146,33 +255,30 @@ function getSeamHoldsByElementId({
 }
 
 function buildTrackNodes({
-	tracks,
+	trackViews,
 	mediaMap,
 	canvasSize,
 	isPreview,
 	uncroppedElementId,
 	ticksPerFrame,
+	sinkKeys,
 }: {
-	tracks: TimelineTrack[];
+	trackViews: TrackView[];
 	mediaMap: Map<string, MediaAsset>;
 	canvasSize: TCanvasSize;
 	isPreview?: boolean;
 	uncroppedElementId?: string | null;
 	ticksPerFrame: number | null;
+	/** Which decoder each clip samples from; see {@link getSinkKeysByElementId}. */
+	sinkKeys: Map<string, string>;
 }): AnyBaseNode[] {
 	const nodes: AnyBaseNode[] = [];
 
-	for (const track of tracks) {
-		const elements = getVisibleSortedElements({ track });
-		// Transitions come from the track as stored, not from `elements`: the
-		// transition commands resolve neighbours the same way, so a hidden clip
-		// keeps owning its cut and unhiding it does not silently move the
-		// transition.
-		const transitionPlacements = findTransitions({ track });
-		const ownDecoderElementIds = getOwnDecoderElementIds({
-			placements: transitionPlacements,
-			track,
-		});
+	for (const {
+		track,
+		elements,
+		transitions: transitionPlacements,
+	} of trackViews) {
 		const seamHolds = getSeamHoldsByElementId({
 			track,
 			elements,
@@ -236,9 +342,7 @@ function buildTrackNodes({
 							masks: element.masks ?? [],
 							transitions,
 							fade: element.fade,
-							...(ownDecoderElementIds.has(element.id) && {
-								sinkKey: `${mediaAsset.id}:${element.id}`,
-							}),
+							sinkKey: sinkKeys.get(element.id),
 						}),
 					);
 				}
@@ -318,7 +422,6 @@ function buildTrackNodes({
 						opacity: readOpacityFromParams({ params: element.params }),
 						blendMode: readBlendModeFromParams({ params: element.params }),
 						adjustParams: pickClipAdjustmentParams({ params: element.params }),
-						effects: element.effects ?? [],
 						masks: element.masks ?? [],
 					}),
 				);
@@ -330,22 +433,30 @@ function buildTrackNodes({
 }
 
 function buildBlurBackgroundNodes({
-	track,
+	view,
 	mediaMap,
 	blurIntensity,
 	uncroppedElementId,
+	sinkKeys,
 }: {
-	track: TimelineTrack | undefined;
+	view: TrackView | undefined;
 	mediaMap: Map<string, MediaAsset>;
 	blurIntensity: number;
 	uncroppedElementId?: string | null;
+	/**
+	 * The foreground clips' decoder keys. The backdrop is the same frame of the
+	 * same file at the same moment, so it must ask the same decoder — given a key
+	 * of its own it would open a second one per clip, and the prewarm that the
+	 * foreground clip gets would not cover it.
+	 */
+	sinkKeys: Map<string, string>;
 }): AnyBaseNode[] {
-	if (!track) {
+	if (!view) {
 		return [];
 	}
 
 	const nodes: AnyBaseNode[] = [];
-	const elements = getVisibleSortedElements({ track });
+	const elements = view.elements;
 
 	for (const element of elements) {
 		if (element.type !== "video" && element.type !== "image") {
@@ -380,6 +491,7 @@ function buildBlurBackgroundNodes({
 					element.id === uncroppedElementId
 						? undefined
 						: readCropFromParams({ params: element.params }),
+				sinkKey: sinkKeys.get(element.id),
 				blurIntensity,
 			}),
 		);
@@ -429,25 +541,42 @@ export function buildScene({
 		...tracks.overlay.filter((track) => !("hidden" in track && track.hidden)),
 		...(!tracks.main.hidden ? [tracks.main] : []),
 	];
-	const orderedTracksBottomToTop = visibleTracks.slice().reverse();
-	const mainTrack = tracks.main.hidden ? undefined : tracks.main;
+	const trackViews = visibleTracks.map((track) => readTrackView({ track }));
+	const mainTrackView = tracks.main.hidden
+		? undefined
+		: trackViews.find((view) => view.track === tracks.main);
+
+	// Element ids are unique across the project, so one flat map covers every
+	// track. Built here rather than per builder so the blur backdrop and the clip
+	// it sits behind cannot disagree about which decoder they read.
+	const sinkKeys = new Map<string, string>();
+	for (const view of trackViews) {
+		for (const [elementId, sinkKey] of getSinkKeysByElementId({
+			view,
+			ticksPerFrame,
+		})) {
+			sinkKeys.set(elementId, sinkKey);
+		}
+	}
 
 	const allNodes = buildTrackNodes({
-		tracks: orderedTracksBottomToTop,
+		trackViews: trackViews.slice().reverse(),
 		mediaMap,
 		canvasSize,
 		isPreview,
 		uncroppedElementId,
 		ticksPerFrame,
+		sinkKeys,
 	});
 
 	if (background.type === "blur") {
 		const blurNodes = buildBlurBackgroundNodes({
-			track: mainTrack,
+			view: mainTrackView,
 			mediaMap,
 			blurIntensity:
 				background.blurIntensity ?? DEFAULT_BACKGROUND_BLUR_INTENSITY,
 			uncroppedElementId,
+			sinkKeys,
 		});
 		for (const node of blurNodes) {
 			rootNode.add(node);

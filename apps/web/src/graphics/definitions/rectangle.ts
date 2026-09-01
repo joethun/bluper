@@ -1,59 +1,24 @@
-import type { ParamDefinition } from "@/params";
-import { STROKE_ALIGN_PARAM, type GraphicStrokeAlign } from "./shared";
 import type { GraphicDefinition } from "../types";
 import { renderGraphicShape } from "../shapes";
-
-interface RectangleParams {
-	fill: string;
-	stroke: string;
-	strokeWidth: number;
-	strokeAlign: GraphicStrokeAlign;
-	cornerRadius: number;
-}
-
-const RECTANGLE_PARAMS: ParamDefinition<keyof RectangleParams & string>[] = [
-	{
-		key: "fill",
-		label: "Fill",
-		type: "color",
-		default: "#ffffff",
-	},
-	{
-		key: "stroke",
-		label: "Color",
-		type: "color",
-		default: "#000000",
-		group: "stroke",
-	},
-	{
-		key: "strokeWidth",
-		label: "Width",
-		type: "number",
-		default: 0,
-		min: 0,
-		max: 64,
-		step: 1,
-		shortLabel: "W",
-		group: "stroke",
-	},
+import {
+	CORNER_RADIUS_PARAM,
+	FILL_PARAM,
 	STROKE_ALIGN_PARAM,
-	{
-		key: "cornerRadius",
-		label: "Corner radius",
-		type: "number",
-		default: 0,
-		min: 0,
-		max: 50,
-		step: 1,
-		shortLabel: "R",
-	},
-];
+	STROKE_COLOR_PARAM,
+	STROKE_WIDTH_PARAM,
+} from "./shared";
 
 export const rectangleGraphicDefinition: GraphicDefinition = {
 	id: "rectangle",
 	name: "Rectangle",
 	keywords: ["rectangle", "square", "box"],
-	params: RECTANGLE_PARAMS,
+	params: [
+		FILL_PARAM,
+		CORNER_RADIUS_PARAM,
+		STROKE_COLOR_PARAM,
+		STROKE_WIDTH_PARAM,
+		STROKE_ALIGN_PARAM,
+	],
 	render({ ctx, params, width, height }) {
 		renderGraphicShape({ shape: "rectangle", ctx, params, width, height });
 	},

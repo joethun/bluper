@@ -124,13 +124,15 @@ pub fn upload_texture(options: JsValue) -> Result<(), JsValue> {
                 ));
             };
 
-            let texture = gpu_runtime.context.import_offscreen_canvas_texture(
-                &source,
-                width,
-                height,
-                "compositor-upload-texture",
-            );
-            runtime.compositor.upsert_texture(id, texture);
+            runtime.compositor.upsert_texture_with(id, |existing| {
+                gpu_runtime.context.import_offscreen_canvas_texture(
+                    &source,
+                    existing,
+                    width,
+                    height,
+                    "compositor-upload-texture",
+                )
+            });
             Ok(())
         })
     })
@@ -154,13 +156,15 @@ pub fn upload_video_frame(options: JsValue) -> Result<(), JsValue> {
                 ));
             };
 
-            let texture = gpu_runtime.context.import_video_frame_texture(
-                &source,
-                width,
-                height,
-                "compositor-upload-video-frame",
-            );
-            runtime.compositor.upsert_texture(id, texture);
+            runtime.compositor.upsert_texture_with(id, |existing| {
+                gpu_runtime.context.import_video_frame_texture(
+                    &source,
+                    existing,
+                    width,
+                    height,
+                    "compositor-upload-video-frame",
+                )
+            });
             Ok(())
         })
     })

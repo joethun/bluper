@@ -4,6 +4,7 @@ import {
 	mediaTimeToSeconds,
 	type MediaTime,
 	roundMediaTime,
+	TICKS_PER_SECOND,
 	ZERO_MEDIA_TIME,
 } from "@/wasm";
 import { getElementLocalTime } from "@/animation";
@@ -70,7 +71,7 @@ import {
 import { ImageNode, loadImageSource } from "./nodes/image-node";
 import { StickerNode, loadStickerSource } from "./nodes/sticker-node";
 import { TextNode, type ResolvedTextNodeState } from "./nodes/text-node";
-import { VideoNode } from "./nodes/video-node";
+import { VideoNode, type ResolvedVideoNodeState } from "./nodes/video-node";
 import type {
 	ResolvedVisualNodeState,
 	ResolvedVisualSourceNodeState,
@@ -171,6 +172,38 @@ function releaseVideoFrame({
 }
 
 /**
+ * The `VideoFrame` to hand downstream for `sample`, reusing the one `previous`
+ * already holds when the decoder has not moved on.
+ *
+ * One decoded sample covers every rendered frame it is current for, which is
+ * more than one whenever the source runs slower than the timeline — a 24fps clip
+ * on a 30fps project, a freeze, a clip retimed below 1x, or a playhead held
+ * still while an animation moves the layer. Cloning it again for each of those
+ * hands the texture caches a `VideoFrame` they have never seen, because both of
+ * them compare by identity, and the unchanged picture is read back out of a
+ * canvas and uploaded to the GPU all over again.
+ *
+ * `previous` must be the state from the pass before, which is still what
+ * `node.resolved` holds while a resolve runs — `resolveNodeSelf` assigns the new
+ * one only once it settles. That state's frame is released against whatever is
+ * returned here, so handing the same object back is what keeps it open rather
+ * than leaking it; {@link releaseVideoFrame} is the other half of that pairing,
+ * which is why the two live together.
+ */
+function frameForSample({
+	previous,
+	sample,
+}: {
+	previous:
+		| { sample?: VideoSample; source: CanvasImageSource }
+		| null
+		| undefined;
+	sample: VideoSample;
+}): CanvasImageSource {
+	return previous?.sample === sample ? previous.source : sample.toVideoFrame();
+}
+
+/**
  * Closes every decoded frame a tree is holding and clears its resolved state.
  *
  * A render tree is rebuilt from scratch on any timeline change — which during a
@@ -239,6 +272,7 @@ function resolveNodeSelf({
 		if (!gate) {
 			node.resolved = null;
 			releaseVideoFrame({ frame: previous, keep: undefined });
+			prewarmUpcomingVideoNode({ node, context });
 			return;
 		}
 		return resolveVideoNode({ node, context, gate }).then((resolved) => {
@@ -661,6 +695,22 @@ function sampleVideoFrame({
 	node: VideoNode;
 	clipTime: number;
 }): Promise<VideoSample | null> {
+	return videoCache.getSampleAt({
+		mediaId: node.params.mediaId,
+		sinkKey: node.params.sinkKey,
+		source: node.params.source,
+		time: sourceSecondsAtClipTime({ node, clipTime }),
+	});
+}
+
+/** Where in the file `clipTime` reads from, in seconds, clamped to the material. */
+function sourceSecondsAtClipTime({
+	node,
+	clipTime,
+}: {
+	node: VideoNode;
+	clipTime: number;
+}): number {
 	const sourceTime = resolveSampledSourceTime({
 		freeze: node.params.freeze,
 		trimStart: node.params.trimStart,
@@ -673,12 +723,71 @@ function sampleVideoFrame({
 		min: ZERO_MEDIA_TIME,
 		max: getLastSampleableSourceTime({ params: node.params }),
 	});
+	return mediaTimeToSeconds({ time: clampedSourceTime });
+}
 
-	return videoCache.getSampleAt({
+/**
+ * How far ahead of the playhead a clip is opened for.
+ *
+ * Long enough to cover the whole cold start of a decoder — probing the
+ * container, demuxing the first GOP, one shell decode and the iterator opened
+ * behind it, which on a source re-encoded with almost no keyframes is most of a
+ * second on its own. Short enough that a timeline of short clips is not opening
+ * decoders for material the playhead may never reach, and that a run of them
+ * cannot crowd out the decoders drawing the current frame — `VideoCache.prewarm`
+ * holds that second line.
+ */
+const PREWARM_LOOKAHEAD_TICKS = 2 * TICKS_PER_SECOND;
+
+/**
+ * Opens the decoder for a clip that is about to start, while the frames still
+ * being drawn come from somewhere else.
+ *
+ * Called from the same visibility gate that skips the clip: a node the playhead
+ * is not inside costs nothing to resolve, and this is the one thing worth doing
+ * for it. Everything expensive about a cut belongs to the incoming clip's first
+ * frame, so it is worth paying for while there is still a frame's worth of
+ * slack — see `VideoCache.prewarm`, which decides whether the moment is right.
+ */
+const clipStartSecondsCache = new WeakMap<VideoNode["params"], number>();
+
+/**
+ * Where the clip's own first frame reads from, in seconds — the position a
+ * prewarm opens its decoder at.
+ *
+ * Cached on the params, which cannot change while the node lives. Without it
+ * `resolveSampledSourceTime`'s wasm crossing — which deserialises the freeze and
+ * retime options on every call — is paid for every clip inside the lookahead on
+ * every pass, and thrown away entirely during a scrub, where {@link
+ * VideoCache.prewarm} declines to do anything with the answer.
+ */
+function clipStartSourceSeconds({ node }: { node: VideoNode }): number {
+	const cached = clipStartSecondsCache.get(node.params);
+	if (cached !== undefined) return cached;
+
+	const seconds = sourceSecondsAtClipTime({ node, clipTime: 0 });
+	clipStartSecondsCache.set(node.params, seconds);
+	return seconds;
+}
+
+function prewarmUpcomingVideoNode({
+	node,
+	context,
+}: {
+	node: VideoNode;
+	context: ResolveContext;
+}): void {
+	const untilStart = node.params.timeOffset - context.time;
+	if (untilStart <= 0 || untilStart > PREWARM_LOOKAHEAD_TICKS) {
+		return;
+	}
+
+	videoCache.prewarm({
 		mediaId: node.params.mediaId,
 		sinkKey: node.params.sinkKey,
 		source: node.params.source,
-		time: mediaTimeToSeconds({ time: clampedSourceTime }),
+		// The clip's own first frame, which is where playback will enter it.
+		time: clipStartSourceSeconds({ node }),
 	});
 }
 
@@ -690,7 +799,7 @@ async function resolveVideoNode({
 	node: VideoNode;
 	context: ResolveContext;
 	gate: VisualGate;
-}): Promise<ResolvedVisualSourceNodeState | null> {
+}): Promise<ResolvedVideoNodeState | null> {
 	const frame = await sampleVideoFrame({ node, clipTime: gate.clipTime });
 	if (!frame) {
 		logTransitionFrameMiss({
@@ -714,7 +823,8 @@ async function resolveVideoNode({
 
 	return {
 		...visualState,
-		source: frame.toVideoFrame(),
+		source: frameForSample({ previous: node.resolved, sample: frame }),
+		sample: frame,
 		sourceWidth,
 		sourceHeight,
 	};
@@ -951,6 +1061,7 @@ async function decodeBackdropSource({
 		});
 		const frame = await videoCache.getSampleAt({
 			mediaId: node.params.mediaId,
+			sinkKey: node.params.sinkKey,
 			source: node.params.source,
 			time: mediaTimeToSeconds({ time: sourceTime }),
 		});
@@ -959,7 +1070,11 @@ async function decodeBackdropSource({
 		}
 
 		return {
-			source: frame.toVideoFrame(),
+			source: frameForSample({
+				previous: node.resolved?.backdropSource,
+				sample: frame,
+			}),
+			sample: frame,
 			width: frame.displayWidth,
 			height: frame.displayHeight,
 		};

@@ -44,6 +44,8 @@ pub fn apply_effect_passes(options: JsValue) -> Result<wgpu::web_sys::OffscreenC
     with_gpu_runtime(|runtime| {
         let source_texture = runtime.context.import_offscreen_canvas_texture(
             &source,
+            // A one-shot import with nothing held to write into.
+            None,
             width,
             height,
             "effects-input-texture",

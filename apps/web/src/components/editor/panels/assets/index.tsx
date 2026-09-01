@@ -7,6 +7,7 @@ import { MediaView } from "./views/assets";
 import { SettingsView } from "./views/settings";
 import { TextView } from "@/text/components/assets-view";
 import { TransitionsView } from "@/transitions/components/assets-view";
+import { ShapesView } from "@/graphics/components/assets-view";
 
 export function AssetsPanel() {
 	const { activeTab } = useAssetsPanelStore();
@@ -14,6 +15,7 @@ export function AssetsPanel() {
 	const viewMap: Record<Tab, React.ReactNode> = {
 		media: <MediaView />,
 		text: <TextView />,
+		shapes: <ShapesView />,
 		transitions: <TransitionsView />,
 		settings: <SettingsView />,
 	};

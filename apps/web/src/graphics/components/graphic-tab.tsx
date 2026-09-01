@@ -1,6 +1,5 @@
 "use client";
 
-import { useRef } from "react";
 import { useElementPlayhead } from "@/components/editor/panels/properties/hooks/use-element-playhead";
 import {
 	useKeyframedParamProperty,
@@ -14,7 +13,6 @@ import {
 	resolveGraphicElementParamsAtTime,
 } from "@/graphics";
 import { useElementPreview } from "@/timeline/hooks/use-element-preview";
-import { useEditor } from "@/editor/use-editor";
 import {
 	Section,
 	SectionContent,
@@ -24,15 +22,18 @@ import {
 } from "@/components/section";
 import { PanelHeader } from "@/components/editor/panels/panel-header";
 import { PropertyParamField } from "@/components/editor/panels/properties/components/property-param-field";
-import { Button } from "@/components/ui/button";
-import { MinusIcon, PlusIcon } from "lucide-react";
-import { cn } from "@/utils/ui";
 import type { MediaTime } from "@/wasm";
 
 registerDefaultGraphics();
 
-const DEFAULT_STROKE_WIDTH = 2;
-
+/**
+ * The shape's own controls: what it is made of, then what is drawn round it.
+ *
+ * Two named sections and nothing else in their headers — no collapse, no group
+ * reset. A shape has half a dozen fields in total, so there is nothing to fold
+ * away to reach, and every field already carries its own reset in the number
+ * field beside it.
+ */
 export function GraphicTab({
 	element,
 	trackId,
@@ -57,137 +58,43 @@ export function GraphicTab({
 		localTime,
 	});
 
-	const shapeParams = definition.params.filter((p) => p.group !== "stroke");
-	const hasStrokeParams = definition.params.some((p) => p.group === "stroke");
+	const groups = [
+		{
+			title: definition.name,
+			params: definition.params.filter((param) => param.group !== "stroke"),
+		},
+		{
+			title: "Stroke",
+			params: definition.params.filter((param) => param.group === "stroke"),
+		},
+	].filter((group) => group.params.length > 0);
 
 	return (
 		<div className="flex h-full flex-col">
 			<PanelHeader title="Graphic" />
-			<Section collapsible sectionKey={`${element.id}:graphic`}>
-				<SectionHeader>
-					<SectionTitle>{definition.name}</SectionTitle>
-				</SectionHeader>
-				<SectionContent>
-					<SectionFields>
-						{shapeParams.map((param) => (
-							<AnimatedGraphicParamField
-								key={param.key}
-								param={param}
-								trackId={trackId}
-								element={liveElement}
-								localTime={localTime}
-								isPlayheadWithinElementRange={isPlayheadWithinElementRange}
-								resolvedParams={resolvedParams}
-							/>
-						))}
-					</SectionFields>
-				</SectionContent>
-			</Section>
-			{hasStrokeParams && <StrokeSection element={element} trackId={trackId} />}
+			{groups.map((group) => (
+				<Section key={group.title}>
+					<SectionHeader>
+						<SectionTitle>{group.title}</SectionTitle>
+					</SectionHeader>
+					<SectionContent>
+						<SectionFields>
+							{group.params.map((param) => (
+								<AnimatedGraphicParamField
+									key={param.key}
+									param={param}
+									trackId={trackId}
+									element={liveElement}
+									localTime={localTime}
+									isPlayheadWithinElementRange={isPlayheadWithinElementRange}
+									resolvedParams={resolvedParams}
+								/>
+							))}
+						</SectionFields>
+					</SectionContent>
+				</Section>
+			))}
 		</div>
-	);
-}
-
-function StrokeSection({
-	element,
-	trackId,
-}: {
-	element: GraphicElement;
-	trackId: string;
-}) {
-	const editor = useEditor();
-	const definition = graphicsRegistry.get(element.definitionId);
-	const { localTime, isPlayheadWithinElementRange } = useElementPlayhead({
-		startTime: element.startTime,
-		duration: element.duration,
-	});
-	const { renderElement } = useElementPreview({
-		trackId,
-		elementId: element.id,
-		fallback: element,
-	});
-
-	const liveElement = renderElement as GraphicElement;
-	const resolvedParams = resolveGraphicElementParamsAtTime({
-		element: liveElement,
-		localTime,
-	});
-	const strokeParams = definition.params.filter((p) => p.group === "stroke");
-	const lastStrokeWidth = useRef(DEFAULT_STROKE_WIDTH);
-	const isStrokeEnabled = Number(element.params.strokeWidth ?? 0) > 0;
-
-	const toggleStroke = () => {
-		if (isStrokeEnabled) {
-			lastStrokeWidth.current = Number(
-				element.params.strokeWidth ?? DEFAULT_STROKE_WIDTH,
-			);
-			editor.timeline.updateElements({
-				updates: [
-					{
-						trackId,
-						elementId: element.id,
-						patch: { params: { ...element.params, strokeWidth: 0 } },
-					},
-				],
-			});
-		} else {
-			editor.timeline.updateElements({
-				updates: [
-					{
-						trackId,
-						elementId: element.id,
-						patch: {
-							params: {
-								...element.params,
-								strokeWidth: lastStrokeWidth.current,
-							},
-						},
-					},
-				],
-			});
-		}
-	};
-
-	return (
-		<Section
-			collapsible
-			defaultOpen={isStrokeEnabled}
-			sectionKey={`${element.id}:stroke`}
-		>
-			<SectionHeader
-				trailing={
-					<Button
-						variant="ghost"
-						size="icon"
-						onClick={(event) => {
-							event.stopPropagation();
-							toggleStroke();
-						}}
-					>
-						{isStrokeEnabled ? <MinusIcon /> : <PlusIcon />}
-					</Button>
-				}
-			>
-				<SectionTitle>Stroke</SectionTitle>
-			</SectionHeader>
-			<SectionContent
-				className={cn(!isStrokeEnabled && "pointer-events-none opacity-50")}
-			>
-				<SectionFields>
-					{strokeParams.map((param) => (
-						<AnimatedGraphicParamField
-							key={param.key}
-							param={param}
-							trackId={trackId}
-							element={liveElement}
-							localTime={localTime}
-							isPlayheadWithinElementRange={isPlayheadWithinElementRange}
-							resolvedParams={resolvedParams}
-						/>
-					))}
-				</SectionFields>
-			</SectionContent>
-		</Section>
 	);
 }
 

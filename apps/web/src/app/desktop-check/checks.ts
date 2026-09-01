@@ -81,6 +81,7 @@ import {
 } from "@/services/renderer/gpu-renderer";
 import { buildAdjustmentFilterPasses } from "@/adjustments/filter-passes";
 import { wasmCompositor } from "@/services/renderer/compositor/wasm-compositor";
+import { videoStagingAllocations } from "bluper-wasm";
 import { keepSourceAlpha } from "@/effects/canvas";
 import {
 	effectsRegistry,
@@ -138,6 +139,30 @@ function fillPattern({
 	for (let i = 0; i < bytes.length; i++) {
 		bytes[i] = (offset + i) % 251;
 	}
+}
+
+/**
+ * A decoded frame split into four quadrants, each its own red level: 0 top-left,
+ * 80 top-right, 160 bottom-left, 240 bottom-right.
+ *
+ * The distinct levels are what make a misplaced draw legible. A crop, a scale or
+ * a sub-rect that landed on the wrong pixels reads back as another quadrant's
+ * number rather than as "some red", so the failure message can say which part of
+ * the picture arrived.
+ */
+function quadrantFrame({ size }: { size: number }): VideoFrame {
+	const source = new OffscreenCanvas(size, size);
+	const ctx = source.getContext("2d");
+	if (!ctx) throw new Error("no source context");
+
+	const half = size / 2;
+	const reds = [0, 80, 160, 240];
+	reds.forEach((red, index) => {
+		ctx.fillStyle = `rgb(${red}, 0, 0)`;
+		ctx.fillRect((index % 2) * half, Math.floor(index / 2) * half, half, half);
+	});
+
+	return new VideoFrame(source, { timestamp: 0 });
 }
 
 function expect({
@@ -2142,6 +2167,100 @@ const checks: Check[] = [
 		},
 	},
 	{
+		name: "Uploading video at mixed sizes keeps one staging canvas",
+		run: async () => {
+			// Every decoded frame reaches the GPU by being drawn into a scratch
+			// `OffscreenCanvas` and read back — and that canvas is sized by how many
+			// pixels the layer covers, bucketed to 64, capped at the source's own
+			// resolution. So it is not one size per session: it differs between two
+			// clips of different resolutions or aspect ratios, and between two
+			// layers on screen together.
+			//
+			// Held by an exact-size cache, the canvas and its 2D context were
+			// therefore rebuilt at every cut between clips in different buckets —
+			// some joins on a timeline and not the ones beside them, which is what
+			// the reported stutter was — and on every single frame that composited
+			// two such layers at once. There is no other way to see it: the cost is
+			// an allocation, and an allocation inside a frame is a dropped frame and
+			// nothing else. So count them.
+			await initializeGpuRenderer();
+			expect({
+				condition: isGpuAvailable(),
+				message: "the GPU renderer is unavailable, so nothing uploads",
+			});
+			expect({
+				condition: typeof VideoFrame !== "undefined",
+				message: "this engine has no VideoFrame, so the preview cannot decode",
+			});
+
+			const CHECK_OWNER = "staging-check";
+			// Two sizes in different 64px buckets, alternating the way a timeline
+			// cutting between a wide clip and a tall one does.
+			const SIZES = [64, 192, 64, 192, 64, 192];
+
+			const frames: VideoFrame[] = [];
+			try {
+				wasmCompositor.ensureInitialized({ width: 64, height: 64 });
+
+				const upload = ({ size, index }: { size: number; index: number }) => {
+					const source = new OffscreenCanvas(size, size);
+					const ctx = source.getContext("2d");
+					if (!ctx) throw new Error("no source context");
+					ctx.fillStyle = "rgb(200, 0, 0)";
+					ctx.fillRect(0, 0, size, size);
+					const frame = new VideoFrame(source, { timestamp: index });
+					frames.push(frame);
+					// A fresh id each time, because a cut is exactly that: an id the
+					// compositor has never held.
+					wasmCompositor.syncTextures({
+						owner: CHECK_OWNER,
+						textures: [
+							{
+								kind: "video",
+								id: `${CHECK_OWNER}:layer-${index}`,
+								source: frame,
+								width: size,
+								height: size,
+							},
+						],
+					});
+				};
+
+				// The first upload may or may not be this run's first — the checks
+				// above have uploaded video too — so the baseline is read after one
+				// upload has settled the canvas at the smaller size.
+				upload({ size: SIZES[0]!, index: 0 });
+				const before = videoStagingAllocations();
+
+				for (let index = 1; index < SIZES.length; index += 1) {
+					upload({ size: SIZES[index]!, index });
+				}
+
+				const built = videoStagingAllocations() - before;
+
+				// One growth, to cover the larger size. Every size seen before is
+				// free from then on, whichever order they arrive in.
+				expect({
+					condition: built <= 1,
+					message: `${SIZES.length - 1} uploads alternating between ${
+						SIZES[0]
+					}px and ${SIZES[1]}px built ${built} staging canvases; at most one growth was expected, so the canvas is being replaced per upload again`,
+				});
+
+				return `alternating ${SIZES.length} uploads between two size buckets built ${built} staging canvas beyond the first`;
+			} finally {
+				wasmCompositor.syncTextures({ owner: CHECK_OWNER, textures: [] });
+				for (const frame of frames) {
+					try {
+						frame.close();
+					} catch {
+						// syncTextures may have closed it already.
+					}
+				}
+			}
+		},
+	},
+	{
 		name: "A reduced render scale draws the same picture at fewer pixels",
 		run: async () => {
 			// Playback resolution rests on one property: the frame's geometry is in
@@ -2401,31 +2520,15 @@ const checks: Check[] = [
 			// includes ignoring `drawImage`'s source rectangle: cropping a frame
 			// directly handed back the whole picture squeezed into the cropped box
 			// rather than the quarter that was kept, which read as the clip being
-			// squished instead of cropped. `cropToSurface` copies a frame into a
-			// canvas first for exactly this reason; what follows measures the quirk
-			// and then the helper's answer to it.
+			// squished instead of cropped. `drawCropped` positions the frame instead
+			// of sub-recting it for exactly this reason; what follows measures the
+			// quirk, and the check below measures the answer to it.
 			expect({
 				condition: typeof VideoFrame !== "undefined",
 				message: "this engine has no VideoFrame, so the preview cannot decode",
 			});
 
-			// Four quadrants, each its own red level, so a sub-rect draw that landed
-			// on the wrong pixels is unmistakable in the readback.
-			const source = new OffscreenCanvas(8, 8);
-			const sourceCtx = source.getContext("2d");
-			if (!sourceCtx) throw new Error("no source context");
-			const QUADRANTS = [
-				{ x: 0, y: 0, red: 0 },
-				{ x: 4, y: 0, red: 80 },
-				{ x: 0, y: 4, red: 160 },
-				{ x: 4, y: 4, red: 240 },
-			];
-			for (const quadrant of QUADRANTS) {
-				sourceCtx.fillStyle = `rgb(${quadrant.red}, 0, 0)`;
-				sourceCtx.fillRect(quadrant.x, quadrant.y, 4, 4);
-			}
-
-			const frame = new VideoFrame(source, { timestamp: 0 });
+			const frame = quadrantFrame({ size: 8 });
 			try {
 				// Reads the kept bottom-right quadrant (4..8, 4..8) from `from` into a
 				// fresh 4x4 canvas and reports the first pixel.
@@ -2454,8 +2557,60 @@ const checks: Check[] = [
 				});
 
 				return direct > 220
-					? `this engine honours a source rect on a frame (${direct}); the copy is belt and braces`
-					: `a source rect on a frame lands on the wrong pixels here (${direct} instead of 240); through a canvas it reads ${viaCanvas}`;
+					? `this engine honours a source rect on a frame (${direct}); the offset form cropped clips use is belt and braces`
+					: `a source rect on a frame lands on the wrong pixels here (${direct} instead of 240), which is why a cropped clip is drawn at an offset instead; through a canvas it reads ${viaCanvas}`;
+			} finally {
+				frame.close();
+			}
+		},
+	},
+	{
+		name: "A frame drawn at a negative offset crops to the kept pixels",
+		run: async () => {
+			// How every cropped clip now reaches the GPU. A decoded frame cannot be
+			// sub-rected on the way in — the check above measures this engine
+			// ignoring `drawImage`'s source rectangle on a `VideoFrame` — so the crop
+			// is expressed as geometry instead: draw the whole frame shifted up and
+			// left by the crop origin into a canvas the size of the kept region, and
+			// let the canvas clip away the rest.
+			//
+			// That replaced copying the frame whole onto a full-resolution canvas and
+			// sub-recting the copy, which cost a clear and a blit at the source's own
+			// size on every frame of every cropped clip, to produce a region usually
+			// smaller than the copy. The saving is only real if the destination
+			// offset is honoured where the source rectangle is not — two different
+			// parts of one call, which this engine already treats differently, so it
+			// is measured rather than reasoned about.
+			expect({
+				condition: typeof VideoFrame !== "undefined",
+				message: "this engine has no VideoFrame, so the preview cannot decode",
+			});
+
+			const frame = quadrantFrame({ size: 8 });
+			try {
+				// Keeping the bottom-right quadrant: a 4x4 canvas with the frame drawn
+				// at (-4, -4) at its natural size, which is exactly what `drawCropped`
+				// does for a clip cropped to its lower right.
+				const kept = new OffscreenCanvas(4, 4);
+				const keptCtx = kept.getContext("2d", { willReadFrequently: true });
+				if (!keptCtx) throw new Error("no readback context");
+				keptCtx.drawImage(frame, -4, -4, 8, 8);
+
+				const origin = keptCtx.getImageData(0, 0, 1, 1).data[0] ?? -1;
+				expect({
+					condition: origin > 220,
+					message: `a frame drawn at (-4, -4) read ${origin} at the origin where the kept quadrant is 240, so the destination offset is being ignored and a cropped clip would show the wrong part of the picture`,
+				});
+
+				// The far corner as well, so a draw that happened to land the right
+				// colour at the origin but at the wrong scale cannot pass.
+				const far = keptCtx.getImageData(3, 3, 1, 1).data[0] ?? -1;
+				expect({
+					condition: far > 220,
+					message: `the kept quadrant read ${far} at its far corner instead of 240, so the frame landed at the wrong scale`,
+				});
+
+				return `a frame drawn at (-4, -4) crops to the kept quadrant (${origin} at the origin, ${far} at its far corner)`;
 			} finally {
 				frame.close();
 			}
@@ -2477,23 +2632,7 @@ const checks: Check[] = [
 				message: "this engine has no VideoFrame, so the preview cannot decode",
 			});
 
-			// Four quadrants, each its own red level. Scaled into a canvas half the
-			// size, all four have to still be there.
-			const source = new OffscreenCanvas(16, 16);
-			const sourceCtx = source.getContext("2d");
-			if (!sourceCtx) throw new Error("no source context");
-			const QUADRANTS = [
-				{ x: 0, y: 0, red: 0 },
-				{ x: 8, y: 0, red: 80 },
-				{ x: 0, y: 8, red: 160 },
-				{ x: 8, y: 8, red: 240 },
-			];
-			for (const quadrant of QUADRANTS) {
-				sourceCtx.fillStyle = `rgb(${quadrant.red}, 0, 0)`;
-				sourceCtx.fillRect(quadrant.x, quadrant.y, 8, 8);
-			}
-
-			const frame = new VideoFrame(source, { timestamp: 0 });
+			const frame = quadrantFrame({ size: 16 });
 			try {
 				const staging = new OffscreenCanvas(8, 8);
 				const stagingCtx = staging.getContext("2d", {
@@ -2592,6 +2731,13 @@ const checks: Check[] = [
 						],
 					},
 				});
+
+				// Silenced before the clock starts. Everything this check is about
+				// happens upstream of the master gain — the sinks open, the clips
+				// stream, the adjustment tears them down — so a zero level costs no
+				// coverage, and the alternative is a self-check run that hums a
+				// probe tone at whoever is running it.
+				editor.playback.setVolume({ volume: 0 });
 
 				const before = editor.audio.getDiagnostics();
 				editor.playback.play();

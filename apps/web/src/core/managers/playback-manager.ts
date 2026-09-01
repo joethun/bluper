@@ -1,4 +1,5 @@
 import type { EditorCore } from "@/core";
+import { videoCache } from "@/services/video-cache/service";
 import {
 	addMediaTime,
 	clampMediaTime,
@@ -49,13 +50,13 @@ export class PlaybackManager {
 			this.seek({ time: ZERO_MEDIA_TIME });
 		}
 
-		this.isPlaying = true;
+		this.setPlaying({ playing: true });
 		this.startTimer();
 		this.notify();
 	}
 
 	pause(): void {
-		this.isPlaying = false;
+		this.setPlaying({ playing: false });
 		this.stopTimer();
 		this.notify();
 	}
@@ -162,7 +163,7 @@ export class PlaybackManager {
 		}
 
 		if (shouldPause) {
-			this.isPlaying = false;
+			this.setPlaying({ playing: false });
 			this.stopTimer();
 		}
 
@@ -172,6 +173,17 @@ export class PlaybackManager {
 		if (timeChanged) {
 			this.notifySeek(this.currentTime);
 		}
+	}
+
+	/**
+	 * Playing and placing the playhead want different things from the video
+	 * decoders — see `VideoCache.prewarm` — and the request stream they produce
+	 * is not distinguishable, so the transition is told rather than inferred.
+	 * Every path that starts or stops the clock goes through here.
+	 */
+	private setPlaying({ playing }: { playing: boolean }): void {
+		this.isPlaying = playing;
+		videoCache.setPlaying({ playing });
 	}
 
 	private notify(): void {

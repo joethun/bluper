@@ -322,17 +322,13 @@ function NumberParamField({
 	return (
 		<NumberField
 			className={className}
-			icon={param.shortLabel}
 			suffix={suffix}
 			suffixClassName="text-muted-foreground"
 			value={draft.displayValue}
-			dragSensitivity="slow"
 			isDefault={value === param.default}
 			onFocus={draft.onFocus}
 			onChange={draft.onChange}
 			onBlur={draft.onBlur}
-			onScrub={previewFromDisplay}
-			onScrubEnd={onCommit}
 			onReset={handleReset}
 		/>
 	);

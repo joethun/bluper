@@ -1,11 +1,23 @@
 import type { ElementType } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { BlendIcon, FolderIcon, SettingsIcon, TypeIcon } from "lucide-react";
+import {
+	BlendIcon,
+	FolderIcon,
+	SettingsIcon,
+	ShapesIcon,
+	TypeIcon,
+} from "lucide-react";
 
 // Effects are not here: they are chosen per clip, from the Effects tab of the
 // properties panel, rather than browsed as project assets.
-export const TAB_KEYS = ["media", "text", "transitions", "settings"] as const;
+export const TAB_KEYS = [
+	"media",
+	"text",
+	"shapes",
+	"transitions",
+	"settings",
+] as const;
 
 export type Tab = (typeof TAB_KEYS)[number];
 
@@ -17,6 +29,10 @@ export const tabs = {
 	text: {
 		icon: TypeIcon,
 		label: "Text",
+	},
+	shapes: {
+		icon: ShapesIcon,
+		label: "Shapes",
 	},
 	transitions: {
 		icon: BlendIcon,

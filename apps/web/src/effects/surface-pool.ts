@@ -40,7 +40,6 @@ export const SURFACE_KEYS = {
 	filter: "filter",
 	filterBlur: "filter-blur",
 	crop: "crop",
-	cropSource: "crop-source",
 } as const;
 
 export function borrowSurface({

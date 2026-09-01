@@ -13,6 +13,7 @@ import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import { useMenuPreview } from "@/editor/use-menu-preview";
 import { getVisibleElementsWithBounds } from "@/preview/element-bounds";
 import {
+	CircleDashedIcon,
 	ContrastIcon,
 	ExpandIcon,
 	FeatherIcon,
@@ -20,7 +21,6 @@ import {
 	MoveVerticalIcon,
 	PlusIcon,
 	RotateCwIcon,
-	ShapesIcon,
 	Trash2Icon,
 	TypeIcon,
 } from "lucide-react";
@@ -843,7 +843,7 @@ function MaskNumberField({
 function EmptyView({ onAddMask }: EmptyViewProps) {
 	return (
 		<PanelEmptyState
-			icon={ShapesIcon}
+			icon={CircleDashedIcon}
 			title="No masks"
 			description="Add a mask to hide or reveal parts of this layer."
 			action={

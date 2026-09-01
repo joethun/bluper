@@ -227,7 +227,6 @@ export interface GraphicElement extends BaseTimelineElement {
 	type: "graphic";
 	definitionId: string;
 	hidden?: boolean;
-	effects?: Effect[];
 	masks?: Mask[];
 }
 
@@ -347,15 +346,15 @@ export type VisualElement = Extract<
 >;
 
 /**
- * The types the Effects panel stacks passes onto. Text is deliberately absent:
- * its look is authored outright in the Text panel, and a pass laid over the
- * glyphs fights that rather than adding to it.
+ * The types the Effects panel stacks passes onto. Text and shapes are
+ * deliberately absent: their look is authored outright in their own panel — the
+ * fill, the stroke, the glyphs — and a pass laid over the top fights that rather
+ * than adding to it.
  */
 export const EFFECTABLE_ELEMENT_TYPES = elementTypes(
 	"video",
 	"image",
 	"sticker",
-	"graphic",
 );
 
 export type EffectableElement = Extract<

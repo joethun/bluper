@@ -25,6 +25,7 @@ import {
 	type NativeVideoConfig,
 } from "@/lib/tauri-runtime";
 import { nativeSourcePath, type MediaSourceRef } from "@/media/source";
+import { measureSpanAsync } from "@/diagnostics/render-perf";
 
 /**
  * How many frames may be decoded but not yet handed to the caller.
@@ -288,29 +289,85 @@ async function loadGop({
 	const cached = cachedGopAt({ mediaPath, time: startSeconds });
 	if (cached) return cached;
 
-	return await inFileOrder({
-		mediaPath,
-		run: async () => {
-			// Another reader of this file may have filed exactly this GOP while
-			// we waited our turn.
-			const filed = cachedGopAt({ mediaPath, time: startSeconds });
-			if (filed) return filed;
-
-			const gop = await tauriDecodeVideoGop({ mediaPath, startSeconds });
-			const packets = await readGopPackets({ gop });
-
-			const entry = touchGop({
+	// The one step of forward playback that is not just a decode, and the one
+	// worth its own span: a container open, a demux and a read back over the
+	// asset protocol, reached from inside `samples`.
+	return await measureSpanAsync({
+		name: "gopDemux",
+		fn: () =>
+			inFileOrder({
 				mediaPath,
-				gop,
-				packets,
-				isFirst: startSeconds <= 0,
-			});
-			gopCacheBytes += packets.byteLength;
-			evictGops();
-			return entry;
-		},
+				run: async () => {
+					// Another reader of this file may have filed exactly this GOP
+					// while we waited our turn.
+					const filed = cachedGopAt({ mediaPath, time: startSeconds });
+					if (filed) return filed;
+
+					const gop = await tauriDecodeVideoGop({ mediaPath, startSeconds });
+					const packets = await readGopPackets({ gop });
+
+					const entry = touchGop({
+						mediaPath,
+						gop,
+						packets,
+						isFirst: startSeconds <= 0,
+					});
+					gopCacheBytes += packets.byteLength;
+					evictGops();
+					return entry;
+				},
+			}),
 	});
 }
+
+/**
+ * Starts loading the GOP after the one being decoded, without waiting for it.
+ *
+ * A GOP boundary is the one point in forward playback that is not just a decode:
+ * the shell has to open the container and demux, and the page has to read the
+ * packets back over the asset protocol — tens of milliseconds, and on media with
+ * long GOPs several megabytes of them. Reached from inside `samples`, all of
+ * that lands in the middle of an `iterator.next()` that a render pass is waiting
+ * on, so it arrives as a dropped frame at every boundary.
+ *
+ * Firing it while the current GOP still has frames left is what takes it off
+ * that path. Nothing waits on the result: the loop's own {@link loadGop} call
+ * either finds the entry filed or joins the same in-flight demux behind
+ * {@link inFileOrder}, so a boundary reached early costs a wait rather than a
+ * second demux.
+ */
+function prefetchGop({
+	mediaPath,
+	startSeconds,
+}: {
+	mediaPath: string;
+	startSeconds: number;
+}): void {
+	if (cachedGopAt({ mediaPath, time: startSeconds })) return;
+	void loadGop({ mediaPath, startSeconds }).catch(() => {
+		// A GOP that cannot be demuxed ahead of time will be asked for again at
+		// the boundary, where the failure belongs to the frame that needed it.
+	});
+}
+
+/**
+ * Whether the webview's decoder accepts each file's codec, once it has been
+ * asked. Absent means not asked yet.
+ *
+ * Opening a sink learns a file's codec the only way the shell offers: by
+ * demuxing its first GOP. That runs on the file's own {@link inFileOrder} chain,
+ * so it puts a container open, a demux and a scratch write ahead of whatever GOP
+ * the decoders already reading that file are about to need — and the GOP it
+ * demuxes is thrown away, since {@link NativeVideoSampleSink.samples} configures
+ * from the config on each GOP it actually reads.
+ *
+ * One decoder per asset made that a cost per asset. A decoder per clip — see
+ * `getSinkKeysByElementId` — makes it a cost per clip, which during playback is
+ * a cost per cut, landing on the chain that gates the outgoing clip's next GOP.
+ * A file's codec does not change while the project holds it, so the answer is
+ * kept and every sink after the first opens without touching the shell.
+ */
+const probedSupport = new Map<string, boolean>();
 
 /**
  * Drops what is held for one file. Called when its asset leaves the project —
@@ -325,6 +382,9 @@ export function forgetCachedGops({ mediaPath }: { mediaPath: string }): void {
 		gopCache.splice(index, 1);
 	}
 	fileOrder.delete(mediaPath);
+	// A relink can put different bytes behind this path, so the codec has to be
+	// asked again rather than assumed.
+	probedSupport.delete(mediaPath);
 }
 
 /**
@@ -374,7 +434,31 @@ export class NativeVideoSampleSink {
 				const durations = frameDurations({ gop });
 				let inFlight = 0;
 
-				for (const chunk of gop.chunks) {
+				// Where the next GOP is asked for: far enough in that this
+				// iterator has shown it is playing through rather than being
+				// replaced, early enough to have most of a GOP of lead time.
+				//
+				// Not at the top of the loop, where it would look like the obvious
+				// place. A seek builds a fresh iterator and most of them are
+				// abandoned within a few frames — a scrub is a run of them, and so
+				// is a cut, where the outgoing clip's decoder is restarted while
+				// the incoming one takes over. Demuxing the next GOP for each of
+				// those buys nothing and costs a container open and a file read
+				// apiece, which measured as a 9% loss across a cut.
+				const prefetchAfter = Math.floor(gop.chunks.length / 2);
+
+				for (let index = 0; index < gop.chunks.length; index += 1) {
+					const chunk = gop.chunks[index]!;
+					if (
+						index === prefetchAfter &&
+						gop.nextGopStartSeconds !== null &&
+						!this.disposed
+					) {
+						prefetchGop({
+							mediaPath: this.mediaPath,
+							startSeconds: gop.nextGopStartSeconds,
+						});
+					}
 					while (inFlight >= MAX_FRAMES_IN_FLIGHT) {
 						if (this.failure) throw this.failure;
 						if (this.ready.length === 0) {
@@ -424,9 +508,13 @@ export class NativeVideoSampleSink {
 	 */
 	async frameAt(time: number): Promise<VideoSample | null> {
 		if (this.disposed) return null;
-		const decoded = await tauriDecodeVideoFrame({
-			mediaPath: this.mediaPath,
-			atSeconds: Math.max(0, time),
+		const decoded = await measureSpanAsync({
+			name: "shellFrame",
+			fn: () =>
+				tauriDecodeVideoFrame({
+					mediaPath: this.mediaPath,
+					atSeconds: Math.max(0, time),
+				}),
 		});
 		if (this.disposed) return null;
 		if (decoded.codedWidth <= 0 || decoded.codedHeight <= 0) return null;
@@ -617,19 +705,33 @@ export async function openNativeVideoSink({
 	if (!tauriAvailable()) return null;
 	if (typeof VideoDecoder === "undefined") return null;
 
+	const probed = probedSupport.get(mediaPath);
+	if (probed !== undefined) {
+		return probed ? new NativeVideoSampleSink({ mediaPath }) : null;
+	}
+
 	try {
 		// Queued behind any demux of this file in flight, so the shell cannot
 		// rewrite a GOP file that a read is part-way through.
-		const probe = await inFileOrder({
-			mediaPath,
-			run: () => tauriDecodeVideoGop({ mediaPath, startSeconds: 0 }),
+		const probe = await measureSpanAsync({
+			name: "codecProbe",
+			fn: () =>
+				inFileOrder({
+					mediaPath,
+					run: () => tauriDecodeVideoGop({ mediaPath, startSeconds: 0 }),
+				}),
 		});
 		const support = await VideoDecoder.isConfigSupported(
 			toDecoderConfig({ config: probe.config }),
 		);
-		if (!support.supported) return null;
+		// `supported` is optional in the spec's type; an absent answer is not a yes.
+		const supported = support.supported === true;
+		probedSupport.set(mediaPath, supported);
+		if (!supported) return null;
 		return new NativeVideoSampleSink({ mediaPath });
 	} catch {
+		// Not recorded either way: a file the shell could not open yet is one
+		// whose bytes are still being written, and the next open should ask again.
 		return null;
 	}
 }
