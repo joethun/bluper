@@ -1,0 +1,278 @@
+name: Desktop Release
+
+# Builds the desktop shell into installers on a runner that matches the target
+# OS, then publishes them to the releases page. Tauri's bundler is host-only —
+# it shells out to the platform's own packaging tools — so Windows installers
+# have to be built on Windows, which is what the matrix is for.
+# `bundle.targets` per platform comes from `tauri.conf.json` (`deb` + `rpm`)
+# and `tauri.windows.conf.json` (`nsis`).
+#
+# Both Linux packages come off the one Ubuntu runner: Tauri's `rpm` target is
+# built by a vendored Rust `rpm` crate rather than by shelling out to
+# `rpmbuild`, so it needs no packaging tools the `deb` target didn't already
+# need — and no Fedora runner.
+on:
+  push:
+    # Every push to the main line publishes over the rolling `latest`
+    # pre-release; a `v*` tag cuts a permanent one. Deliberately unfiltered by
+    # path: GitHub does not document whether `paths-ignore` is evaluated for
+    # tag pushes, and a release that silently does not run is a worse failure
+    # than a spare build. `concurrency` below cancels superseded runs.
+    branches: ["main"]
+    tags: ["v*"]
+  # Or run it by hand from the Actions tab on any branch.
+  workflow_dispatch:
+  # Keep the packaging path honest on PRs that touch it, without publishing.
+  pull_request:
+    paths:
+      - "apps/desktop/**"
+      - "rust/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/desktop-release.yml"
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      # One platform failing shouldn't discard a good build of the other.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            bundle_glob: |
+              target/release/bluper-desktop.exe
+              target/release/bundle/nsis/*-setup.exe
+          - os: ubuntu-latest
+            name: linux-x64
+            bundle_glob: |
+              target/release/bluper-desktop
+              target/release/bundle/deb/*.deb
+              target/release/bundle/rpm/*.rpm
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      # Nothing here is ever rebuilt on top of a previous run's output — the
+      # cache holds finished dependency artifacts — so incremental compilation
+      # only buys extra files to write, hash, and cache.
+      CARGO_INCREMENTAL: 0
+      # `Test native shell` compiles the whole Tauri tree a second time in the
+      # dev profile, and on Windows debug info is the expensive half of that:
+      # separate PDBs, written per crate, then scanned and cached. The tests
+      # assert on return values, not on backtraces, so drop it. Release (what
+      # actually ships) is untouched — it sets `strip = true` at the workspace
+      # root either way.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+
+    steps:
+      # First, before anything writes to disk. Defender ships enabled on the
+      # Windows runners and scans every one of the tens of thousands of small
+      # files rustc, the linker, and `bun install` produce, which is the usual
+      # first suspect when a Rust build costs several times more on Windows than
+      # on Linux for no other visible reason. Best-effort: if a runner image
+      # ever refuses the call, that is a slow build, not a failed release.
+      - name: Exclude the build tree from Defender
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          foreach ($path in @(
+            "${{ github.workspace }}",
+            "$env:USERPROFILE\.cargo",
+            "$env:USERPROFILE\.rustup",
+            "$env:LOCALAPPDATA\tauri"
+          )) {
+            try { Add-MpPreference -ExclusionPath $path -ErrorAction Stop } catch {
+              Write-Host "::warning::Could not exclude $path from Defender: $_"
+            }
+          }
+          foreach ($process in @("rustc.exe", "cargo.exe", "link.exe", "bun.exe")) {
+            try { Add-MpPreference -ExclusionProcess $process -ErrorAction Stop } catch {
+              Write-Host "::warning::Could not exclude $process from Defender: $_"
+            }
+          }
+
+      - uses: actions/checkout@v4
+
+      # WebKitGTK and friends. The Windows runner already ships WebView2, so
+      # this is the one genuinely platform-specific step.
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Two targets are built per run (wasm32 for the renderer, host for the
+          # shell); keying on the OS keeps them from evicting each other.
+          key: desktop-${{ matrix.name }}
+          workspaces: ". -> target"
+
+      # The NSIS target isn't on the runner: `tauri build` downloads the NSIS
+      # toolchain and the WebView2 bootstrapper into %LOCALAPPDATA%\tauri the
+      # first time it bundles, which is minutes of network time the `deb`/`rpm`
+      # targets never pay. Keyed on the lockfile because that is what pins
+      # `@tauri-apps/cli`, and the CLI version decides what it fetches.
+      - name: Cache the Tauri bundler toolchain
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/tauri
+          key: tauri-bundler-${{ matrix.name }}-${{ hashFiles('bun.lock') }}
+          restore-keys: tauri-bundler-${{ matrix.name }}-
+
+      - uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: latest
+
+      - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.2.18
+
+      # `beforeBuildCommand` runs a full `next build`, and with
+      # `productionBrowserSourceMaps` on that is not a cheap step on either
+      # runner. The key is the commit so every run saves a fresh entry; the
+      # prefix restore hands the build its predecessor's cache.
+      - name: Cache the Next.js build
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: next-${{ matrix.name }}-${{ github.sha }}
+          restore-keys: next-${{ matrix.name }}-
+
+      # `rust/wasm/pkg` is generated, never committed, so `bun install` has
+      # nothing to link until this runs. Must precede it.
+      - name: Build WASM renderer
+        run: wasm-pack build rust/wasm --target bundler --out-dir pkg
+
+      - name: Install dependencies
+        run: bun install
+
+      # The only place the `#[cfg(windows)]` half of `available_bytes` is ever
+      # executed — `cargo test` on a Linux dev box cannot reach it.
+      - name: Test native shell
+        run: cargo test -p bluper-desktop
+
+      # Runs `beforeBuildCommand` (the Next static export) and then bundles.
+      - name: Build desktop app
+        working-directory: apps/desktop
+        run: bunx tauri build
+
+      # The bare binary rides along for debugging; only the installers under
+      # `bundle/` are attached to the release.
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluper-${{ matrix.name }}
+          path: ${{ matrix.bundle_glob }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # A `pull_request` run is a check, not a release — and on a fork its token
+    # is read-only regardless. The ref test is what keeps a manual run from a
+    # feature branch off the rolling release: it still builds and still uploads
+    # its artifacts, it just doesn't publish them as `latest`.
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    permissions:
+      contents: write
+
+    steps:
+      # Both platforms' artifacts land in one tree: `dist/bundle/{deb,rpm,nsis}`
+      # plus the two bare binaries at the top level.
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # One publish path, two channels — the assets are identical, only the tag
+      # they hang off differs:
+      #   - a `v*` tag push cuts a permanent release at that tag
+      #   - anything else overwrites the rolling `latest` pre-release
+      - name: Decide which release this is
+        id: channel
+        run: |
+          short="${GITHUB_SHA::7}"
+          commit_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            {
+              echo "tag=${tag}"
+              echo "title=${tag}"
+              echo "prerelease=false"
+              echo "notes=true"
+            } >> "$GITHUB_OUTPUT"
+            echo "Installers built from [\`${short}\`](${commit_url})." > body.md
+          else
+            {
+              echo "tag=latest"
+              echo "title=Latest build (${short})"
+              echo "prerelease=true"
+              echo "notes=false"
+            } >> "$GITHUB_OUTPUT"
+            {
+              echo "Automatic build of \`main\` at [\`${short}\`](${commit_url})."
+              echo
+              echo "Replaced by every push to \`main\`, so the download links here always"
+              echo "point at the newest build. For a fixed version, use a tagged release."
+            } > body.md
+          fi
+
+      # `latest` is a moving target, and nothing about it moves on its own:
+      # updating a release in place leaves its tag on whichever commit it was
+      # first cut from, and leaves behind any asset whose filename changed with
+      # the version. Deleting both and recreating is what keeps the tag, the
+      # assets and the commit that produced them in agreement. Best-effort —
+      # the first ever run has nothing to delete.
+      - name: Clear the previous rolling release
+        if: steps.channel.outputs.tag == 'latest'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete latest --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.channel.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.channel.outputs.title }}
+          prerelease: ${{ steps.channel.outputs.prerelease }}
+          generate_release_notes: ${{ steps.channel.outputs.notes }}
+          body_path: body.md
+          # Matched by extension rather than by directory: `upload-artifact`
+          # roots each artifact at the least common ancestor of what it matched,
+          # so the depth of `bundle/` in here shifts the moment the bare
+          # binaries leave the upload globs. The bare binaries themselves stay
+          # out of the release — they are in the run's artifacts for debugging.
+          files: |
+            dist/**/*.deb
+            dist/**/*.rpm
+            dist/**/*-setup.exe
+          # A pattern that matches nothing is a platform that quietly stopped
+          # bundling; an empty release is a failed build that looks like a
+          # success.
+          fail_on_unmatched_files: true
