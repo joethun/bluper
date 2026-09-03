@@ -45,6 +45,14 @@
 
 pub mod sink;
 
+mod resolutions;
+
+pub use resolutions::{
+    ExportResolution, ExportVideoBitrateOptions, ListExportResolutionsOptions,
+    export_video_bitrate, export_video_bitrate_inner, list_export_resolutions,
+    list_export_resolutions_inner,
+};
+
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 

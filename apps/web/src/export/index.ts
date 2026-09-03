@@ -1,34 +1,37 @@
 import type { FrameRate } from "bluper-wasm";
 import { getExportFormatSpec } from "./formats";
-import type { VideoCodecName } from "./formats";
 import type { ExportFormat } from "./formats";
+import type { ExportResolution } from "./resolutions";
 
 export {
-	asVideoCodecName,
+	EXPORT_FORMAT,
+	EXPORT_VIDEO_CODEC,
 	getExportFormatSpec,
-	getVideoCodecLabel,
 	isAudioOnlyExportFormat,
-	listEncodableVideoCodecs,
 	listExportFormats,
-	parseExportFormat,
 	resolveExportAudioEncoding,
 	resolveExportVideoCodec,
 } from "./formats";
 export type { ExportFormat, VideoCodecName } from "./formats";
+export {
+	describeExportResolution,
+	getExportResolutionKey,
+	getExportResolutionLabel,
+	listProjectExportResolutions,
+} from "./resolutions";
+export type { ExportResolution } from "./resolutions";
 
 /**
- * The codec to encode video with. `auto` follows the source — a project cut
- * from H.264 comes back out as H.264 — and is what every export used before the
- * choice was offered. An explicit codec is only honoured when the container
- * takes it and this engine can encode it; see `resolveExportVideoCodec`.
+ * What the panel asks the user, which is now one question: how big.
+ *
+ * Container and codec are settled — see `EXPORT_FORMAT` and
+ * `EXPORT_VIDEO_CODEC` — and audio is always carried, because a timeline with
+ * sound on it that exports silent is a bug report rather than a preference.
  */
-export type ExportVideoCodec = "auto" | VideoCodecName;
-
 export interface ExportOptions {
-	format: ExportFormat;
+	/** One of `listProjectExportResolutions`, in output pixels. */
+	resolution: ExportResolution;
 	fps?: FrameRate;
-	includeAudio?: boolean;
-	videoCodec?: ExportVideoCodec;
 }
 
 /**

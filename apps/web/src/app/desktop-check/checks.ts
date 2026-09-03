@@ -59,8 +59,11 @@ import { getMediaTypeFromFile } from "@/wasm/file-types";
 import { processMediaPaths } from "@/media/processing";
 import type { MediaType } from "@/media/types";
 import {
+	EXPORT_VIDEO_CODEC,
 	getExportFormatSpec,
+	getExportResolutionLabel,
 	listExportFormats,
+	listProjectExportResolutions,
 	resolveExportAudioEncoding,
 	resolveExportVideoCodec,
 	type ExportFormat,
@@ -242,11 +245,19 @@ async function encodeSampleClip({
 	frames = 20,
 	width = 320,
 	height = 240,
+	fps = 30,
 	keyFrameInterval,
 }: {
 	frames?: number;
 	width?: number;
 	height?: number;
+	/**
+	 * Frame rate to declare on the stream. The sink puts a keyframe every
+	 * second of footage, so this also sets how many frames a GOP holds — which
+	 * is what a check about crossing a boundary, or about the catch-up cost of
+	 * starting inside one, actually cares about.
+	 */
+	fps?: number;
 	/**
 	 * Seconds between keyframes. Left alone the encoder picks, which for a
 	 * clip this short means one GOP for the whole file — no use to a check
@@ -264,7 +275,7 @@ async function encodeSampleClip({
 			videoCodec: "avc",
 			width,
 			height,
-			fpsNumerator: 30,
+			fpsNumerator: fps,
 			fpsDenominator: 1,
 			videoBitrate: 1_000_000,
 			audioCodec: null,
@@ -500,6 +511,84 @@ async function scratchMediaRef({
 		ref: { kind: "url", url: tauriConvertFileSrc(path), path },
 		path,
 	};
+}
+
+/**
+ * Marks a project as belonging to a check run rather than to the user. It is
+ * part of the name because that is the only field a leftover project still
+ * carries once the run that made it is gone — a run killed halfway through
+ * cannot clean up after itself, so the next one does it by the name.
+ */
+const SCRATCH_PROJECT_PREFIX = "Self-check: ";
+
+/**
+ * Every project this run has made. A check deletes its own as it finishes,
+ * but a save armed before that can still be in flight, so the harness deletes
+ * the whole list again once the run is over.
+ */
+const scratchProjectIds = new Set<string>();
+
+/**
+ * A project for a check to work in. Nothing made here is meant to outlive the
+ * run.
+ */
+async function createScratchProject({
+	name,
+}: {
+	name: string;
+}): Promise<string> {
+	const projectId = await EditorCore.getInstance().project.createNewProject({
+		name: `${SCRATCH_PROJECT_PREFIX}${name}`,
+	});
+	scratchProjectIds.add(projectId);
+	return projectId;
+}
+
+/**
+ * Delete a project a check made, along with its media and its row on the
+ * projects page.
+ *
+ * Closing it first is the load-bearing part. Creating a project through the
+ * editor arms the debounced autosave — initializing its scenes is itself a
+ * change the save manager hears — and a save that lands after the row is gone
+ * writes it straight back. What the user is left with is a project that
+ * outlived the run, pointing at media this already deleted. The save bails
+ * when no project is open, so closing it is what makes the delete stick.
+ */
+async function disposeScratchProject({
+	projectId,
+}: {
+	projectId: string;
+}): Promise<void> {
+	const editor = EditorCore.getInstance();
+	if (editor.project.getActiveOrNull()?.metadata.id === projectId) {
+		editor.project.closeProject();
+	}
+	// Goes through the manager rather than storage so the projects page drops
+	// the row too, for the case where these checks were opened from inside a
+	// running app instead of at startup.
+	await editor.project.deleteProjects({ ids: [projectId] });
+}
+
+/**
+ * Delete every scratch project that still exists — this run's, and any left
+ * behind by a run that was closed or crashed before it could tidy up.
+ */
+async function sweepScratchProjects(): Promise<void> {
+	const stored = await storageService
+		.loadAllProjectsMetadata()
+		.catch(() => []);
+	const ids = new Set([
+		...scratchProjectIds,
+		...stored
+			.filter((project) => project.name.startsWith(SCRATCH_PROJECT_PREFIX))
+			.map((project) => project.id),
+	]);
+
+	for (const projectId of ids) {
+		await disposeScratchProject({ projectId }).catch(() => {});
+	}
+	scratchProjectIds.clear();
 }
 
 /**
@@ -1659,7 +1748,7 @@ const checks: Check[] = [
 			});
 
 			const editor = EditorCore.getInstance();
-			const projectId = await editor.project.createNewProject({
+			const projectId = await createScratchProject({
 				name: "Desktop check",
 			});
 			try {
@@ -1670,10 +1759,7 @@ const checks: Check[] = [
 				});
 				return `GPU init ${gpuMs}ms (available: ${isGpuAvailable()}), project load ${loadMs}ms`;
 			} finally {
-				await storageService.deleteProject({ id: projectId }).catch(() => {});
-				await storageService
-					.deleteProjectMedia({ projectId })
-					.catch(() => {});
+				await disposeScratchProject({ projectId });
 			}
 		},
 	},
@@ -2682,7 +2768,7 @@ const checks: Check[] = [
 			// attempt and reads as the audio stopping for good.
 			const editor = EditorCore.getInstance();
 			const file = await encodeProbeClip({ seconds: 6 });
-			const projectId = await editor.project.createNewProject({
+			const projectId = await createScratchProject({
 				name: "Audio adjust check",
 			});
 
@@ -2808,10 +2894,7 @@ const checks: Check[] = [
 				return `active=${after.activeClips} teardowns=${after.sinkGeneration - started.sinkGeneration} demoted=${after.unstreamableSources} opened=${after.inputsOpened} disposed=${after.inputsDisposed} tracked=${after.openInputs} leaked=${leaked}`;
 			} finally {
 				editor.playback.pause();
-				await storageService.deleteProject({ id: projectId }).catch(() => {});
-				await storageService
-					.deleteProjectMedia({ projectId })
-					.catch(() => {});
+				await disposeScratchProject({ projectId });
 			}
 		},
 	},
@@ -3929,6 +4012,110 @@ const checks: Check[] = [
 				});
 
 				return `${exportedDuration.toFixed(2)}s of PCM written and read back peaking at ${peak.toFixed(3)}`;
+			} finally {
+				await tauriRemoveFile({ path: artifact.path }).catch(() => {});
+			}
+		},
+	},
+	{
+		name: "A quality pick exports at its own resolution, not the canvas's",
+		run: async () => {
+			// The export panel offers a ladder of sizes below the project's own,
+			// and picking one is the only place the encoded frame size stops
+			// being the canvas size. Two things can go wrong and neither shows
+			// up in the page: the compositor's uniform scale can land a side on
+			// an odd number, which `SinkConfig` refuses outright, and the sink
+			// can be opened with the canvas size while the pixels handed to it
+			// are the smaller ones — which muxes a file whose header lies about
+			// its own frames.
+			const canvas = { width: 1920, height: 1080 };
+			const ladder = listProjectExportResolutions({ canvas });
+
+			expect({
+				condition:
+					ladder
+						.map((entry) => getExportResolutionLabel({ resolution: entry }))
+						.join(",") === "1080p,720p,480p,360p,240p",
+				message: `a 1080p project offered ${ladder
+					.map((entry) => getExportResolutionLabel({ resolution: entry }))
+					.join(", ")}`,
+			});
+			// 4:2:0 subsamples chroma by two in each axis, so an odd side has no
+			// representation at all. Asserted across orientations because the
+			// derived side is the one that rounds, and which side that is
+			// depends on which way up the project is.
+			for (const size of [canvas, { width: 1080, height: 1920 }, { width: 1440, height: 1080 }]) {
+				for (const entry of listProjectExportResolutions({ canvas: size })) {
+					expect({
+						condition: entry.width % 2 === 0 && entry.height % 2 === 0,
+						message: `${size.width}x${size.height} offered ${entry.width}x${entry.height}, which no encoder will take`,
+					});
+				}
+			}
+
+			const target = ladder.find((entry) => entry.shortSide === 480);
+			if (!target) throw new Error("no 480p rung to export");
+
+			const codec = await resolveExportVideoCodec({
+				format: "mp4",
+				preferred: EXPORT_VIDEO_CODEC,
+			});
+			expect({
+				condition: codec !== null,
+				message: "this engine has no video encoder, so nothing can be exported",
+			});
+
+			const seconds = 0.4;
+			const scene = buildScene({
+				canvasSize: canvas,
+				background: { type: "color", color: "#3060c0" },
+				duration: mediaTimeFromSeconds({ seconds }),
+				mediaAssets: [],
+				tracks: {
+					overlay: [],
+					audio: [],
+					main: {
+						id: "main",
+						name: "Main",
+						type: "video",
+						muted: false,
+						hidden: false,
+						elements: [],
+					},
+				},
+			});
+
+			const exporter = new SceneExporter({
+				width: canvas.width,
+				height: canvas.height,
+				output: { width: target.width, height: target.height },
+				fps: DEFAULT_FPS,
+				format: "mp4",
+				videoBitrate: 1_500_000,
+				videoCodec: codec,
+				audioBuffer: undefined,
+			});
+
+			const artifact = await withDeadline({
+				label: "running the reduced-resolution export",
+				timeoutMs: 60_000,
+				run: () => exporter.export({ rootNode: scene }),
+			});
+			expect({
+				condition: artifact?.kind === "path",
+				message: `the export produced ${artifact?.kind ?? "nothing"} instead of a file on disk`,
+			});
+			if (artifact?.kind !== "path") throw new Error("unreachable");
+
+			try {
+				const probe = await tauriProbeMedia({ path: artifact.path });
+				expect({
+					condition:
+						probe.width === target.width && probe.height === target.height,
+					message: `a ${getExportResolutionLabel({ resolution: target })} export of a ${canvas.width}x${canvas.height} project wrote ${probe.width}x${probe.height}`,
+				});
+
+				return `${getExportResolutionLabel({ resolution: target })} of ${canvas.width}x${canvas.height} wrote ${probe.width}x${probe.height}`;
 			} finally {
 				await tauriRemoveFile({ path: artifact.path }).catch(() => {});
 			}
@@ -5057,6 +5244,139 @@ const checks: Check[] = [
 			}
 		},
 	},
+	{
+		name: "Playing forwards moves onto the webview's decoder",
+		run: async () => {
+			// Starting playback anywhere but on a keyframe puts two decoders in
+			// play: the shell answers the frame being asked for now, while a
+			// `samples()` iterator opens behind it for the frames after. The
+			// iterator is the one that has to win — per frame it is a decode and
+			// nothing else, where the shell's route ships a whole I420 picture
+			// across the IPC boundary and cost 11.3ms at 1080p60, most of a frame
+			// budget.
+			//
+			// Both routes draw the correct picture, so a playhead that never
+			// reaches the cheap one is invisible here: no error, no black frame,
+			// nothing a rendered pixel can be asserted against. It shows up only
+			// as playback running at half speed on the user's machine. So the
+			// split itself is what gets asserted.
+			await initializeGpuRenderer();
+			expect({
+				condition: isGpuAvailable(),
+				message: "the GPU renderer is unavailable, so nothing composites",
+			});
+
+			const projectId = crypto.randomUUID();
+			const mediaId = crypto.randomUUID();
+			const width = 640;
+			const height = 360;
+			const sourceFps = 60;
+			const sourceFrames = 180;
+			const file = await encodeSampleClip({
+				frames: sourceFrames,
+				width,
+				height,
+				fps: sourceFps,
+			});
+
+			try {
+				await storageService.saveMediaAsset({
+					projectId,
+					mediaAsset: {
+						id: mediaId,
+						name: "check.mp4",
+						type: "video",
+						file,
+						width,
+						height,
+						duration: sourceFrames / sourceFps,
+					},
+				});
+				const asset = await storageService.loadMediaAsset({
+					projectId,
+					id: mediaId,
+				});
+				expect({ condition: asset !== null, message: "the asset did not load back" });
+
+				const fps = { numerator: sourceFps, denominator: 1 };
+				const ticksPerFrame = Math.round(
+					(TICKS_PER_SECOND * fps.denominator) / fps.numerator,
+				);
+				// The sink keyframes every second, so this lands the in-point
+				// halfway through a GOP — the case where the iterator has real
+				// catch-up to do and the shell has to cover for it.
+				const trimStart = mediaTimeFromSeconds({ seconds: 0.5 });
+				const clipTicks = mediaTimeFromSeconds({ seconds: 2 });
+				const tracks = {
+					overlay: [],
+					audio: [],
+					main: {
+						id: "main",
+						name: "Main",
+						type: "video" as const,
+						muted: false,
+						hidden: false,
+						elements: [
+							{
+								id: "a",
+								name: "A",
+								type: "video" as const,
+								mediaId,
+								startTime: ZERO_MEDIA_TIME,
+								duration: clipTicks,
+								trimStart,
+								trimEnd: ZERO_MEDIA_TIME,
+								params: {},
+							},
+						],
+					},
+				};
+
+				const renderer = new CanvasRenderer({ width, height, fps });
+				const scene = buildScene({
+					canvasSize: { width, height },
+					background: { type: "color", color: "#000000" },
+					duration: clipTicks,
+					mediaAssets: [asset!],
+					tracks,
+					fps,
+					isPreview: true,
+				});
+
+				// Park the playhead first, the way the editor does before play is
+				// pressed: that is what leaves the sink holding one seeked frame
+				// and no iterator.
+				videoCache.setPlaying({ playing: false });
+				await renderer.render({ node: scene, time: 0 });
+
+				videoCache.setPlaying({ playing: true });
+				videoCache.resetRouteTally();
+				const rendered = Math.floor(clipTicks / ticksPerFrame);
+				for (let frame = 0; frame < rendered; frame += 1) {
+					await renderer.render({ node: scene, time: frame * ticksPerFrame });
+				}
+				videoCache.setPlaying({ playing: false });
+
+				const { framesFromIterator, framesFromShell } = videoCache.getStats();
+				// Generous on purpose. The point is which route carries playback,
+				// not an exact hand-over frame — that moves with how fast this
+				// machine decodes, and a check that pins it would fail on a slow
+				// one while telling nobody anything.
+				expect({
+					condition: framesFromIterator > rendered / 2,
+					message: `only ${framesFromIterator} of ${rendered} frames came from the webview's decoder (${framesFromShell} from the shell)`,
+				});
+				expect({
+					condition: framesFromShell < rendered / 4,
+					message: `${framesFromShell} of ${rendered} frames were still decoded in the shell`,
+				});
+				return `${framesFromIterator}/${rendered} frames off the webview's decoder, ${framesFromShell} off the shell`;
+			} finally {
+				videoCache.clearVideo({ mediaId });
+				await storageService.deleteProjectMedia({ projectId }).catch(() => {});
+			}
+		},
+	},
 ];
 
 export async function runDesktopChecks({
@@ -5069,6 +5389,10 @@ export async function runDesktopChecks({
 	}
 
 	const results: CheckResult[] = [];
+	// Anything a previous run left behind goes now, so a project that survived
+	// a crash or a closed window does not sit on the projects page forever.
+	await sweepScratchProjects();
+
 	for (const check of checks) {
 		const started = performance.now();
 		try {
@@ -5091,5 +5415,11 @@ export async function runDesktopChecks({
 			onResult(result);
 		}
 	}
+
+	// And this run's own. Each check deletes its project as it finishes, but a
+	// save already in flight by then can still write the row back behind it,
+	// so the list is worth going through once more with nothing running.
+	await sweepScratchProjects();
+
 	return results;
 }

@@ -17,10 +17,26 @@ import {
 } from "@/export";
 import type { RootNode } from "./nodes/root-node";
 import { CanvasRenderer } from "./canvas-renderer";
+import { measureSpanSync, measureSpanAsync } from "@/diagnostics/render-perf";
 
 export type SceneExporterParams = {
+	/**
+	 * The canvas the scene is composed in. Node coordinates are in these units,
+	 * so this is the project's canvas size — not necessarily the size of the
+	 * frames that come out.
+	 */
 	width: number;
 	height: number;
+	/**
+	 * The pixel size frames are encoded at, when it differs from the canvas.
+	 * This is what the quality picker chooses: the compositor draws at the
+	 * ratio between the two, so a 720p export of a 1080p project rasterises
+	 * 720p pixels rather than rasterising 1080p and shrinking them afterwards.
+	 *
+	 * Both sides must be even — 4:2:0 has no representation for an odd one, and
+	 * `SinkConfig` refuses it — which `listExportResolutions` guarantees.
+	 */
+	output?: { width: number; height: number };
 	fps: FrameRate;
 	format: ExportFormat;
 	/**
@@ -91,6 +107,18 @@ const AUDIO_CHUNK_SECONDS = 1;
  */
 export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 	private renderer: CanvasRenderer;
+	/**
+	 * The frame size written to the file — the requested one, not whatever the
+	 * renderer's uniform scale happened to round the second axis to.
+	 *
+	 * The two can disagree by a pixel, because one scale cannot land both axes
+	 * on an even number for every aspect. The requested pair is the one that
+	 * wins: it is the pair `SinkConfig` will accept, and `renderToCanvas`
+	 * already scales into a target of a different size, so the readback closes
+	 * the gap on its way to the encoder.
+	 */
+	private outputWidth: number;
+	private outputHeight: number;
 	private fps: FrameRate;
 	private format: ExportFormat;
 	private videoBitrate: number;
@@ -104,9 +132,23 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 	constructor(params: SceneExporterParams) {
 		super();
+		const output = params.output ?? {
+			width: params.width,
+			height: params.height,
+		};
+		this.outputWidth = output.width;
+		this.outputHeight = output.height;
 		this.renderer = new CanvasRenderer({
 			width: params.width,
 			height: params.height,
+			// Read off the longer axis. The shorter one is the side the
+			// resolution was named after, so it rounds back onto its own rung;
+			// taking the ratio from it instead leaves the long side a pixel out
+			// on the aspects whose scale does not divide evenly.
+			scale:
+				params.width >= params.height
+					? output.width / params.width
+					: output.height / params.height,
 			fps: params.fps,
 		});
 		this.fps = params.fps;
@@ -244,8 +286,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 			config: {
 				container: this.format,
 				videoCodec: audioOnly ? null : this.videoCodec,
-				width: audioOnly ? 0 : this.renderer.width,
-				height: audioOnly ? 0 : this.renderer.height,
+				width: audioOnly ? 0 : this.outputWidth,
+				height: audioOnly ? 0 : this.outputHeight,
 				fpsNumerator: this.fps.numerator,
 				fpsDenominator: this.fps.denominator,
 				videoBitrate: this.videoBitrate,
@@ -297,8 +339,8 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 		session: { sessionId: number; frameCount: number; ticksPerFrame: number };
 	}): Promise<void> {
 		const canvas = document.createElement("canvas");
-		canvas.width = this.renderer.width;
-		canvas.height = this.renderer.height;
+		canvas.width = this.outputWidth;
+		canvas.height = this.outputHeight;
 		const context = canvas.getContext("2d", { willReadFrequently: true });
 		if (!context) {
 			throw new Error("Failed to open a 2D context for the export canvas");
@@ -354,14 +396,13 @@ export class SceneExporter extends EventEmitter<SceneExporterEvents> {
 
 				// A fresh buffer per frame, so handing the previous one to the
 				// shell while this one is drawn cannot alias it.
-				const pixels = context.getImageData(
-					0,
-					0,
-					canvas.width,
-					canvas.height,
-				).data;
+				const pixels = measureSpanSync({
+					name: "exportReadback",
+					fn: () =>
+						context.getImageData(0, 0, canvas.width, canvas.height).data,
+				});
 
-				await settle();
+				await measureSpanAsync({ name: "exportSettle", fn: settle });
 				inFlight = {
 					index,
 					encoded: sink.writeFrame({

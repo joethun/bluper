@@ -11,6 +11,12 @@
  *
  * What stays on this side is presentation — the label, the one-line
  * description, the MIME type. Those are UI copy, not capability.
+ *
+ * The panel itself no longer asks either question. Every project export is an
+ * MP4 carrying H.264, which is the pair that plays everywhere without the user
+ * having to know why; the table below survives because the desktop self-check
+ * still walks every container the shell can write, and because an audio-only
+ * export is still a shape the pipeline understands.
  */
 
 import {
@@ -65,23 +71,8 @@ type AudioCodecName = (typeof AUDIO_CODEC_NAMES)[number];
 /**
  * The shell answers with plain strings, so its list is filtered against the
  * names this side knows rather than asserted into them. A binary newer than
- * the bundle would otherwise put a codec in the dropdown that nothing here can
- * label — which shows up as a blank menu entry rather than as the missing
- * option it really is.
+ * the bundle would otherwise offer a codec nothing here can label.
  */
-export function asVideoCodecName({
-	name,
-}: {
-	name: string | null;
-}): VideoCodecName | null {
-	return name !== null &&
-		(VIDEO_CODEC_NAMES as readonly string[]).includes(name)
-		? (VIDEO_CODEC_NAMES as readonly VideoCodecName[]).find(
-				(known) => known === name,
-			) ?? null
-		: null;
-}
-
 function knownVideoCodecs({ names }: { names: string[] }): VideoCodecName[] {
 	return names.filter((name): name is VideoCodecName =>
 		(VIDEO_CODEC_NAMES as readonly string[]).includes(name),
@@ -93,6 +84,28 @@ function knownAudioCodecs({ names }: { names: string[] }): AudioCodecName[] {
 		(AUDIO_CODEC_NAMES as readonly string[]).includes(name),
 	);
 }
+
+/**
+ * The container every project export is written into.
+ *
+ * There used to be a picker. It offered six other containers, and each one
+ * traded away the only property that matters at the point a file leaves the
+ * editor: that whatever the user sends it to can open it. The audio-only
+ * containers are still reachable through the pipeline — the self-check writes
+ * a WAV — but nothing in the editor asks a person to choose one.
+ */
+export const EXPORT_FORMAT: ExportFormat = "mp4";
+
+/**
+ * The codec every project export asks for.
+ *
+ * H.264 is not the smallest or the newest; it is the one every player, phone,
+ * editor and upload form made in the last twenty years decodes. It is a
+ * preference rather than an instruction — see `resolveExportVideoCodec` — so a
+ * build whose ffmpeg was compiled without it still exports, using whatever the
+ * container's own order offers instead.
+ */
+export const EXPORT_VIDEO_CODEC: VideoCodecName = "avc";
 
 type ExportFormatSpec = {
 	label: string;
@@ -155,28 +168,6 @@ const EXPORT_FORMAT_SPECS: Readonly<Record<ExportFormat, ExportFormatSpec>> = {
 	},
 };
 
-/** How each codec is named in the UI, rather than in the spec that defines it. */
-const VIDEO_CODEC_LABELS: Readonly<Record<VideoCodecName, string>> = {
-	avc: "H.264",
-	hevc: "H.265 (HEVC)",
-	av1: "AV1",
-	vp9: "VP9",
-	vp8: "VP8",
-	prores: "ProRes",
-};
-
-/**
- * The format a string names, or null. Returns the value rather than narrowing
- * it, because a type predicate can't be written for a destructured parameter.
- */
-export function parseExportFormat({
-	value,
-}: {
-	value: string;
-}): ExportFormat | null {
-	return EXPORT_FORMAT_VALUES.find((format) => format === value) ?? null;
-}
-
 export function getExportFormatSpec({
 	format,
 }: {
@@ -204,14 +195,6 @@ export function isAudioOnlyExportFormat({
 	format: ExportFormat;
 }): boolean {
 	return EXPORT_FORMAT_SPECS[format].kind === "audio";
-}
-
-export function getVideoCodecLabel({
-	codec,
-}: {
-	codec: VideoCodecName;
-}): string {
-	return VIDEO_CODEC_LABELS[codec];
 }
 
 /**
@@ -261,7 +244,7 @@ async function capabilityFor({
  * Empty means the container cannot be written at all here, which the caller
  * has to report rather than discover mid-render.
  */
-export async function listEncodableVideoCodecs({
+async function listEncodableVideoCodecs({
 	format,
 }: {
 	format: ExportFormat;

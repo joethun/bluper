@@ -184,20 +184,31 @@ export class CanvasRenderer {
 			throw new Error("Failed to get target canvas context");
 		}
 
+		const source = wasmCompositor.getCanvas();
 		measureSpanSync({
 			name: "drawImage",
 			fn: () => {
 				// Cleared first because callers reuse their canvas across frames —
 				// the exporter draws every frame into the same one — and a frame
 				// with transparency would otherwise composite over its predecessor.
+				// Measured at 0.66ms of the pair's 9.5ms at 1080p, so it is not
+				// worth trading for a `copy` composite op and the alpha questions
+				// that brings.
 				ctx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
-				ctx.drawImage(
-					wasmCompositor.getCanvas(),
-					0,
-					0,
-					targetCanvas.width,
-					targetCanvas.height,
-				);
+				// The scaling form of `drawImage` costs about 10% more than the
+				// plain one even when the sizes already match, which for the
+				// exporter — where source and target are both the project's
+				// resolution — is every frame. Thumbnails and previews still need
+				// the scale, so the size test picks the path rather than the
+				// caller.
+				if (
+					source.width === targetCanvas.width &&
+					source.height === targetCanvas.height
+				) {
+					ctx.drawImage(source, 0, 0);
+				} else {
+					ctx.drawImage(source, 0, 0, targetCanvas.width, targetCanvas.height);
+				}
 			},
 		});
 	}

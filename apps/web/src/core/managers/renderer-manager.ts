@@ -3,7 +3,7 @@ import type { RootNode } from "@/services/renderer/nodes/root-node";
 import { releaseNodeFrames } from "@/services/renderer/resolve";
 import { runAfterRenders } from "@/services/renderer/canvas-renderer";
 import type { ExportOptions, ExportPhase, ExportResult } from "@/export";
-import { isAudioOnlyExportFormat } from "@/export";
+import { EXPORT_FORMAT } from "@/export";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
 import { SceneExporter } from "@/services/renderer/scene-exporter";
 import { buildScene } from "@/services/renderer/scene-builder";
@@ -217,11 +217,7 @@ export class RendererManager {
 		onFrame?: ({ source }: { source: HTMLCanvasElement }) => void;
 		onCancel?: () => boolean;
 	}): Promise<ExportResult> {
-		const { format, fps, videoCodec } = options;
-		// An audio-only container has nowhere to put pictures, so the audio it
-		// does hold is not optional — the checkbox doesn't apply to it.
-		const audioOnly = isAudioOnlyExportFormat({ format });
-		const includeAudio = audioOnly || options.includeAudio;
+		const { fps, resolution } = options;
 
 		try {
 			const tracks = this.editor.scenes.getActiveScene().tracks;
@@ -240,52 +236,50 @@ export class RendererManager {
 			const exportFps = fps ?? activeProject.settings.fps;
 			const canvasSize = activeProject.settings.canvasSize;
 
-			// Match the source video's bitrate so the export lands at the same
-			// size and quality as the input — no presets for the user to pick,
-			// and no surprise ballooning when the source is already low-bitrate.
-			// The codec follows the source too unless the user chose one, and
-			// either way it has to be something this engine can encode.
+			// The source video's bitrate is what the project's own resolution
+			// would be worth, so an export at that size lands at the same size
+			// and quality as the input, and one below it is scaled by the area
+			// it actually covers. No presets for the user to pick, and no
+			// surprise ballooning when the source is already low-bitrate.
 			const sourceEncoding = await resolveSourceEncoding({
 				mediaAssets,
-				format,
-				requestedCodec: videoCodec,
+				canvas: canvasSize,
+				resolution,
 			});
 
+			// Decoding and mixing audio happens before the first frame is
+			// rendered and exposes no measurable progress (fetch + decodeAudioData
+			// report nothing), so this phase is reported as indeterminate rather
+			// than as a percentage that cannot move.
+			onPhase?.({ phase: "preparing" });
+			onProgress?.({ progress: 0 });
+
+			// Poll the cancel request so aborting during prep takes effect
+			// immediately instead of waiting for decoding to finish.
+			const prepAbortController = new AbortController();
+			const prepCancelInterval = setInterval(() => {
+				if (onCancel?.()) prepAbortController.abort();
+			}, 100);
+
 			let audioBuffer: AudioBuffer | null = null;
-			if (includeAudio) {
-				// Decoding and mixing audio happens before the first frame is
-				// rendered and exposes no measurable progress (fetch + decodeAudioData
-				// report nothing), so this phase is reported as indeterminate rather
-				// than as a percentage that cannot move.
-				onPhase?.({ phase: "preparing" });
-				onProgress?.({ progress: 0 });
-
-				// Poll the cancel request so aborting during prep takes effect
-				// immediately instead of waiting for decoding to finish.
-				const prepAbortController = new AbortController();
-				const prepCancelInterval = setInterval(() => {
-					if (onCancel?.()) prepAbortController.abort();
-				}, 100);
-
-				try {
-					audioBuffer = await createTimelineAudioBuffer({
-						tracks,
-						mediaAssets,
-						duration,
-						signal: prepAbortController.signal,
-					});
-				} catch (error) {
-					if (prepAbortController.signal.aborted) {
-						return { success: false, cancelled: true };
-					}
-					throw error;
-				} finally {
-					clearInterval(prepCancelInterval);
-				}
-
-				if (onCancel?.() || prepAbortController.signal.aborted) {
+			try {
+				audioBuffer = await createTimelineAudioBuffer({
+					tracks,
+					mediaAssets,
+					duration,
+					signal: prepAbortController.signal,
+				});
+			} catch (error) {
+				if (prepAbortController.signal.aborted) {
 					return { success: false, cancelled: true };
 				}
+				throw error;
+			} finally {
+				clearInterval(prepCancelInterval);
+			}
+
+			if (onCancel?.() || prepAbortController.signal.aborted) {
+				return { success: false, cancelled: true };
 			}
 
 			onPhase?.({ phase: "rendering" });
@@ -302,11 +296,12 @@ export class RendererManager {
 			const exporterParams = {
 				width: canvasSize.width,
 				height: canvasSize.height,
+				output: { width: resolution.width, height: resolution.height },
 				fps: exportFps,
-				format,
+				format: EXPORT_FORMAT,
 				videoBitrate: sourceEncoding.bitrate,
 				videoCodec: sourceEncoding.codec,
-				shouldIncludeAudio: !!includeAudio,
+				shouldIncludeAudio: true,
 				audioBuffer: audioBuffer || undefined,
 			} as const;
 

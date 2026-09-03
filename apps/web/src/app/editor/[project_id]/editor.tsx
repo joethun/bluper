@@ -12,6 +12,7 @@ import { PropertiesPanel } from "@/components/editor/panels/properties";
 import { Timeline } from "@/timeline/components";
 import { PreviewPanel } from "@/preview/components";
 import { EditorHeader } from "@/components/editor/editor-header";
+import { ExportScreen } from "@/components/editor/export-screen";
 import { EditorProvider } from "@/components/providers/editor-provider";
 import { usePanelStore } from "@/editor/panel-store";
 import { usePasteMedia } from "@/media/use-paste-media";
@@ -46,6 +47,10 @@ export function Editor() {
 				<div className="min-h-0 min-w-0 flex-1">
 					<EditorLayout />
 				</div>
+				{/* Covers the editor while an export runs rather than replacing it:
+				    the panels below hold the render tree and the compositor the
+				    export draws through. */}
+				<ExportScreen />
 			</div>
 		</EditorProvider>
 	);

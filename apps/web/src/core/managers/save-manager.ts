@@ -85,7 +85,11 @@ export class SaveManager {
 		if (this.isSaving) return;
 		if (!this.hasPendingSave) return;
 
-		const activeProject = this.editor.project.getActive();
+		// `getActiveOrNull`, because a queued save outliving the project it was
+		// queued for is the normal case — closing one leaves the debounce still
+		// armed. `getActive` throws on no project, which turned the guard below
+		// into dead code and the close into an unhandled rejection.
+		const activeProject = this.editor.project.getActiveOrNull();
 		if (!activeProject) return;
 		if (this.editor.project.getIsLoading()) return;
 

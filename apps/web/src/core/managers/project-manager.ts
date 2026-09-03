@@ -40,6 +40,15 @@ export class ProjectManager {
 		result: null,
 	};
 	private exportCancelRequested = false;
+	/**
+	 * Watchers of the frames an export writes, kept apart from `listeners`
+	 * because they are not a React snapshot: frames arrive ten times a second
+	 * and are drawn straight onto a canvas, so routing them through `notify`
+	 * would re-render the editor for pixels nobody reads.
+	 */
+	private exportFrameListeners = new Set<
+		(params: { source: HTMLCanvasElement }) => void
+	>();
 
 	constructor(private editor: EditorCore) {}
 
@@ -194,6 +203,11 @@ export class ProjectManager {
 				this.exportState = { ...this.exportState, phase };
 				this.notify();
 			},
+			onFrame: ({ source }) => {
+				for (const listener of this.exportFrameListeners) {
+					listener({ source });
+				}
+			},
 			onCancel: () => this.exportCancelRequested,
 		});
 
@@ -206,6 +220,21 @@ export class ProjectManager {
 		this.notify();
 
 		return result;
+	}
+
+	/**
+	 * Watches the frames the running export writes, so the export screen can
+	 * show the render as it happens.
+	 *
+	 * The canvas handed over is the one every frame is drawn into, so a listener
+	 * has to read it before it returns — by the next frame it holds different
+	 * pixels.
+	 */
+	subscribeToExportFrames(
+		listener: (params: { source: HTMLCanvasElement }) => void,
+	): () => void {
+		this.exportFrameListeners.add(listener);
+		return () => this.exportFrameListeners.delete(listener);
 	}
 
 	cancelExport(): void {

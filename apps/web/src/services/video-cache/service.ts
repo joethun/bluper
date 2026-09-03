@@ -63,7 +63,9 @@ interface VideoSinkData {
 	 * playhead then starts advancing — playback rather than scrubbing — an
 	 * iterator is worth having, but opening one blocks on the keyframe catch-up.
 	 * So it is opened off to one side while the frames still come from the
-	 * shell, and taken up once it is ready.
+	 * shell, and taken up once it has caught up with the playhead — which is
+	 * not the same moment it opens, because the playhead keeps moving while it
+	 * does. See {@link VideoCache.openIteratorInBackground}.
 	 */
 	openingIterator: Promise<void> | null;
 	/**
@@ -110,6 +112,29 @@ const MAX_IDLE_SINKS = 8;
 const IDLE_FRAMES_BEFORE_EVICTION = 120;
 
 /**
+ * How close two presentation times have to be to count as the same instant.
+ *
+ * Times here are seconds converted from integer ticks on one side and from a
+ * container's own time base on the other, so an exact comparison would turn a
+ * conversion error into a frame the iterator can never reach. A microsecond is
+ * finer than any container's time base and coarser than the error — the same
+ * tolerance `native-sink.ts` uses on the demuxer's timestamps.
+ */
+const FRAME_TIME_EPSILON = 1e-6;
+
+/**
+ * The most frames a decoder opening in the background may decode while chasing
+ * the playhead before it is installed anyway.
+ *
+ * The chase converges whenever the iterator decodes faster than playback
+ * advances, which is the ordinary case — but a machine where it does not would
+ * otherwise decode forever and never hand a decoder over at all. Installing a
+ * late one is worse than installing it early only by the catch-up left, and
+ * `iterateToTime` can absorb that.
+ */
+const MAX_ITERATOR_CATCHUP_FRAMES = 900;
+
+/**
  * Releases the sample and any GPU resources its underlying `VideoFrame` holds.
  * Mediabunny's `VideoSampleSink` reuses samples from an internal pool, but
  * once we stop holding a sample the GPU texture the WebCodecs `VideoFrame`
@@ -149,6 +174,18 @@ class VideoCache {
 	private frameChain = new Map<string, Promise<unknown>>();
 	private seekGenerations = new Map<string, number>();
 	private frameCounter = 0;
+	/**
+	 * How many frames each route has answered, for {@link getStats}.
+	 *
+	 * Sustained forward playback is meant to run on the webview's decoder: per
+	 * frame it costs under a millisecond and moves no pixels across the IPC
+	 * boundary, while the shell's single-frame decode ships a 3MB I420 picture
+	 * and measured 11.3ms per frame at 1080p60 — most of a frame budget. Both
+	 * routes produce the right picture, so a playhead that never reaches the
+	 * cheap one looks entirely correct and plays at half speed. There is no
+	 * error to notice, which is why the split is counted rather than inferred.
+	 */
+	private routeTally = { iterator: 0, shell: 0 };
 
 	/**
 	 * Opens a render pass. Nothing here decodes — it advances the clock that
@@ -389,7 +426,10 @@ class VideoCache {
 		sinkData: VideoSinkData;
 		time: number;
 	}): Promise<VideoSample | null> {
-		if (sinkData.nextFrame && sinkData.nextFrame.timestamp <= time) {
+		if (
+			sinkData.nextFrame &&
+			sinkData.nextFrame.timestamp <= time + FRAME_TIME_EPSILON
+		) {
 			closeSample(sinkData.currentFrame);
 			sinkData.currentFrame = sinkData.nextFrame;
 			sinkData.nextFrame = null;
@@ -400,6 +440,7 @@ class VideoCache {
 			sinkData.currentFrame &&
 			this.isFrameValid({ frame: sinkData.currentFrame, time })
 		) {
+			if (sinkData.iterator) this.routeTally.iterator += 1;
 			if (!sinkData.nextFrame && !sinkData.prefetching) {
 				this.startPrefetch({ sinkData });
 			}
@@ -417,6 +458,7 @@ class VideoCache {
 				fn: () => this.iterateToTime({ sinkData, targetTime: time }),
 			});
 			if (frame) {
+				this.routeTally.iterator += 1;
 				if (!sinkData.nextFrame && !sinkData.prefetching) {
 					this.startPrefetch({ sinkData });
 				}
@@ -437,6 +479,7 @@ class VideoCache {
 		// it means decoding from the GOP's keyframe, which is the stall this
 		// whole path exists to avoid.
 		if (!sinkData.iterator && continuing && sinkData.source.frameAt) {
+			this.routeTally.shell += 1;
 			const frame = await this.nativeFrameAt({ sinkData, time });
 			if (frame) {
 				this.openIteratorInBackground({ sinkData, time });
@@ -466,6 +509,18 @@ class VideoCache {
 		return sinkData.currentFrame;
 	}
 
+	/**
+	 * Whether `frame` is the picture shown at `time`.
+	 *
+	 * The lower bound is tolerant for the same reason {@link FRAME_TIME_EPSILON}
+	 * exists. A frame's timestamp arrives as whole microseconds — that is what
+	 * `EncodedVideoChunk` carries and what the decoder hands back — while the
+	 * time being asked for is an exact tick, so a frame boundary can round to a
+	 * few hundred nanoseconds *after* the instant that is squarely inside it. An
+	 * exact comparison rejects the frame there, and the caller answers by
+	 * decoding the one after it and holding the one before: correct, and a
+	 * needless decode on a third of all frames.
+	 */
 	private isFrameValid({
 		frame,
 		time,
@@ -473,7 +528,10 @@ class VideoCache {
 		frame: VideoSample;
 		time: number;
 	}): boolean {
-		return time >= frame.timestamp && time < frame.timestamp + frame.duration;
+		return (
+			time >= frame.timestamp - FRAME_TIME_EPSILON &&
+			time < frame.timestamp + frame.duration
+		);
 	}
 	private async iterateToTime({
 		sinkData,
@@ -491,20 +549,40 @@ class VideoCache {
 					await sinkData.prefetchPromise;
 				}
 
-				// Check if the nextFrame (which might have just arrived) is what we need
+				// The frame already decoded ahead, when it is one this request
+				// could show. Only a frame starting at or before the target can
+				// be: an iterator runs forwards, so taking one that starts after
+				// it puts the target permanently out of reach and the loop walks
+				// away from what it was asked for.
 				if (
 					sinkData.nextFrame &&
-					sinkData.nextFrame.timestamp <= targetTime + 0.05 // Tolerance
+					sinkData.nextFrame.timestamp <= targetTime + FRAME_TIME_EPSILON
 				) {
 					closeSample(sinkData.currentFrame);
 					sinkData.currentFrame = sinkData.nextFrame;
 					sinkData.nextFrame = null;
+				} else if (sinkData.nextFrame) {
+					// Decoded, and wanted — by the request after this one. Left
+					// where it is rather than pulled past.
+					return sinkData.currentFrame;
 				} else {
 					const { value: frame, done } = await sinkData.iterator.next();
 
 					if (done || !frame) {
 						sinkData.reachedEnd = true;
 						break;
+					}
+
+					if (frame.timestamp > targetTime + FRAME_TIME_EPSILON) {
+						// Stepped past the target — the playhead has moved back
+						// inside the frame it was already on, or the stream has a
+						// gap where this time should be. Either way the picture to
+						// show is the one in hand, and this frame is the next
+						// request's. Keeping both is what stops a seek from being
+						// the answer: rebuilding the iterator here would throw away
+						// a decoder that is exactly where it should be.
+						sinkData.nextFrame = frame;
+						return sinkData.currentFrame;
 					}
 
 					closeSample(sinkData.currentFrame);
@@ -519,8 +597,6 @@ class VideoCache {
 				if (this.isFrameValid({ frame, time: targetTime })) {
 					return frame;
 				}
-
-				if (frame.timestamp > targetTime + 1.0) break;
 			}
 		} catch (error) {
 			console.warn("Iterator failed, will restart:", error);
@@ -647,24 +723,58 @@ class VideoCache {
 		const opening = (async () => {
 			const iterator = sinkData.source.samples(time);
 			try {
-				const { value: frame } = await iterator.next();
-				if (!frame) {
+				let sample = await measureSpanAsync({
+					name: "iteratorOpen",
+					fn: async () => (await iterator.next()).value ?? null,
+				});
+				if (!sample) {
+					await iterator.return();
+					return;
+				}
+
+				// Chase the playhead before handing the decoder over.
+				//
+				// `samples(time)` has to decode from its GOP's keyframe to reach
+				// `time`, which on 1080p60 material is most of a second — and the
+				// shell goes on answering frames throughout, so by the time the
+				// iterator exists the playhead is tens of frames past where it
+				// was opened. Installing it there does not end the stall, it
+				// relocates it: the next render pass is the one that walks the
+				// decoder forward, and it waits for every frame of the gap.
+				//
+				// Closing the gap here costs the same decodes with nothing
+				// waiting on them. The loop re-reads the playhead each time round,
+				// so it converges while the iterator outruns playback and gives up
+				// after {@link MAX_ITERATOR_CATCHUP_FRAMES} when it does not.
+				let chased = 0;
+				while (
+					sample.timestamp + sample.duration <=
+						sinkData.lastRequestedTime + FRAME_TIME_EPSILON &&
+					chased < MAX_ITERATOR_CATCHUP_FRAMES &&
+					sinkData.iteratorEpoch === epoch
+				) {
+					closeSample(sample);
+					chased += 1;
+					sample = (await iterator.next()).value ?? null;
+					if (!sample) break;
+				}
+
+				if (!sample) {
 					await iterator.return();
 					return;
 				}
 				// A seek landed while this was opening, or an iterator arrived
 				// another way: this one is at the wrong place now.
 				if (sinkData.iteratorEpoch !== epoch || sinkData.iterator) {
-					closeSample(frame);
+					closeSample(sample);
 					await iterator.return();
 					return;
 				}
 				sinkData.iterator = iterator;
-				// The frame it produced is the one *at* `time`, which has already
-				// been shown from the shell's decode. Keeping it as `nextFrame`
-				// would show it twice, so it is dropped and the iterator's next
-				// frame is the one that follows.
-				closeSample(frame);
+				// The frame in hand covers the time the shell has already drawn,
+				// so keeping it as `nextFrame` would show one picture twice. It is
+				// dropped and the iterator's next frame is the one that follows.
+				closeSample(sample);
 			} catch (error) {
 				console.warn("Opening a decoder in the background failed:", error);
 				await iterator.return().catch(() => {});
@@ -886,8 +996,19 @@ class VideoCache {
 		}
 	}
 
+	/**
+	 * Zeroes the route tallies, so a caller can attribute one span of playback
+	 * rather than the whole session. Nothing in the editor calls this; the
+	 * desktop check does, which is what keeps the split honest.
+	 */
+	resetRouteTally(): void {
+		this.routeTally = { iterator: 0, shell: 0 };
+	}
+
 	getStats() {
 		return {
+			framesFromIterator: this.routeTally.iterator,
+			framesFromShell: this.routeTally.shell,
 			totalSinks: this.sinks.size,
 			nativeSinks: Array.from(this.sinks.values()).filter((s) => s.native)
 				.length,
